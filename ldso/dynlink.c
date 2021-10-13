@@ -1128,7 +1128,7 @@ static struct dso *load_library(const char *name, struct dso *needed_by)
 	if (find_sym(&temp_dso, "__libc_start_main", 1).sym &&
 	    find_sym(&temp_dso, "stdin", 1).sym) {
 		unmap_library(&temp_dso);
-		return load_library("libc.so", needed_by);
+		return load_library("libc_musl.so", needed_by);
 	}
 	/* Past this point, if we haven't reached runtime yet, ldso has
 	 * committed either to use the mapped library or to abort execution.
@@ -1660,7 +1660,7 @@ hidden void __dls2(unsigned char *base, size_t *sp)
 		ldso.base = base;
 	}
 	Ehdr *ehdr = (void *)ldso.base;
-	ldso.name = ldso.shortname = "libc.so";
+	ldso.name = ldso.shortname = "libc_musl.so";
 	ldso.phnum = ehdr->e_phnum;
 	ldso.phdr = laddr(&ldso, ehdr->e_phoff);
 	ldso.phentsize = ehdr->e_phentsize;
