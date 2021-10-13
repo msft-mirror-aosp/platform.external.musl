@@ -173,6 +173,9 @@ cc_defaults {
         darwin: {
             enabled: false,
         },
+        bionic: {
+            enabled: false,
+        },
     },
 }
 
@@ -295,6 +298,14 @@ cc_genrule {
     cmd: "$(location) -s $(out) $(in)",
     srcs: [":libc_musl"],
     out: ["linker.s"],
+    target: {
+        darwin: {
+            enabled: false,
+        },
+        bionic: {
+            enabled: false,
+        },
+    },
 }
 
 // Convert the linker (which is actually libc_musl.so) into a linker script for embedding in
@@ -308,6 +319,14 @@ cc_genrule {
     cmd: "$(location) -T $(out) $(in)",
     srcs: [":libc_musl"],
     out: ["linker.script"],
+    target: {
+        darwin: {
+            enabled: false,
+        },
+        bionic: {
+            enabled: false,
+        },
+    },
 }
 
 //
