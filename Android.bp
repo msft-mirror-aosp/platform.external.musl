@@ -72,6 +72,7 @@ cc_library_headers {
     device_supported: false,
     system_shared_libs: [],
     export_system_include_dirs: [
+        "android/include",
         "include",
     ],
 }
