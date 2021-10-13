@@ -169,6 +169,11 @@ cc_defaults {
     sanitize: {
         never: true,
     },
+    target: {
+        darwin: {
+            enabled: false,
+        },
+    },
 }
 
 //
@@ -424,6 +429,11 @@ cc_test_host {
     name: "libc_musl_ldso_trampoline_test",
     srcs: ["android/ldso_trampoline_test.cpp"],
     stl: "libc++",
+    target: {
+        darwin: {
+            enabled: false,
+        },
+    },
 }
 
 //
