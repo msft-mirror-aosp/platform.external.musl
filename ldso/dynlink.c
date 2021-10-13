@@ -411,7 +411,7 @@ static void do_relocs(struct dso *dso, size_t *rel, size_t rel_size, size_t stri
 		tls_val = def.sym ? def.sym->st_value : 0;
 
 		if ((type == REL_TPOFF || type == REL_TPOFF_NEG)
-		    && def.dso->tls_id > static_tls_cnt) {
+		    && def.dso && def.dso->tls_id > static_tls_cnt) {
 			error("Error relocating %s: %s: initial-exec TLS "
 				"resolves to dynamic definition in %s",
 				dso->name, name, def.dso->name);
@@ -460,14 +460,14 @@ static void do_relocs(struct dso *dso, size_t *rel, size_t rel_size, size_t stri
 			break;
 #ifdef TLS_ABOVE_TP
 		case REL_TPOFF:
-			*reloc_addr = tls_val + def.dso->tls.offset + TPOFF_K + addend;
+			*reloc_addr = (def.dso ? tls_val + def.dso->tls.offset + TPOFF_K : 0) + addend;
 			break;
 #else
 		case REL_TPOFF:
-			*reloc_addr = tls_val - def.dso->tls.offset + addend;
+			*reloc_addr = (def.dso ? tls_val - def.dso->tls.offset : 0) + addend;
 			break;
 		case REL_TPOFF_NEG:
-			*reloc_addr = def.dso->tls.offset - tls_val + addend;
+			*reloc_addr = (def.dso ? def.dso->tls.offset - tls_val : 0) + addend;
 			break;
 #endif
 		case REL_TLSDESC:
