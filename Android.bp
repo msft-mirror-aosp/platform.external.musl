@@ -155,6 +155,8 @@ cc_defaults {
         "-Wl,--exclude-libs=libclang_rt.builtins-x86_64-android.a",
     ],
 
+    asflags: ["-Wno-unused-command-line-argument"],
+
     header_libs: [
         // The order here is very important, private headers like src/include/features.h override
         // public headers like include/features.h, and arch headers like arch/x86_64/ksigaction.h
