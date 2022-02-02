@@ -267,7 +267,10 @@ cc_library_static {
         "libc_musl_defaults",
         "libc_musl_ldso_sources",
     ],
-    cflags: ["-fno-stack-protector"],
+    cflags: [
+        "-fno-stack-protector",
+        "-DLIBC_SONAME=libc_musl.so",
+    ],
 }
 
 // An attempt to compile the dynamic linker as a standalone library separate from libc_musl.so.
