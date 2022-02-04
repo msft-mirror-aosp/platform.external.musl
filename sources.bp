@@ -990,6 +990,7 @@ cc_defaults {
         "src/stdlib/llabs.c",
         "src/stdlib/lldiv.c",
         "src/stdlib/qsort.c",
+        "src/stdlib/qsort_nr.c",
         "src/stdlib/strtod.c",
         "src/stdlib/strtol.c",
         "src/stdlib/wcstod.c",
