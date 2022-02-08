@@ -311,6 +311,7 @@ cc_defaults {
         "src/malloc/mallocng/aligned_alloc.c",
         "src/malloc/mallocng/donate.c",
         "src/malloc/mallocng/free.c",
+        "src/malloc/mallocng/mallinfo.c",
         "src/malloc/mallocng/malloc.c",
         "src/malloc/mallocng/malloc_usable_size.c",
         "src/malloc/mallocng/realloc.c",
