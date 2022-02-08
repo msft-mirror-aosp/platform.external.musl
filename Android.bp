@@ -178,7 +178,28 @@ cc_defaults {
         bionic: {
             enabled: false,
         },
+        glibc: {
+            enabled: false,
+        },
     },
+}
+
+cc_library_headers {
+    name: "libc_musl_headers",
+    visibility: ["//bionic/libc"],
+    host_supported: true,
+    device_supported: false,
+    system_shared_libs: [],
+    export_header_lib_headers: [
+        "libc_musl_arch_headers",
+        "libc_musl_public_headers",
+        "libc_llndk_headers",
+    ],
+    header_libs: [
+        "libc_musl_arch_headers",
+        "libc_musl_public_headers",
+        "libc_llndk_headers",
+    ],
 }
 
 //
@@ -212,6 +233,8 @@ cc_library_static {
         "libc_musl_opt",
         "libc_musl_opt_nossp",
         "libc_musl_nossp",
+        "libexecinfo",
+        "libb64",
     ],
     multilib: {
         lib32: {
@@ -331,6 +354,9 @@ cc_genrule {
         bionic: {
             enabled: false,
         },
+        glibc: {
+            enabled: false,
+        },
     },
 }
 
@@ -350,6 +376,9 @@ cc_genrule {
             enabled: false,
         },
         bionic: {
+            enabled: false,
+        },
+        glibc: {
             enabled: false,
         },
     },
