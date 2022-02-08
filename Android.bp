@@ -675,9 +675,14 @@ cc_genrule {
         // Headers
         "include/**/*.h",
         "arch/generic/bits/*.h",
+        "android/include/bits/*.h",
+        "android/include/sys/cdefs.h",
         ":libc_musl_syscall.h",
         ":libc_musl_alltypes.h",
         ":libc_musl_sysroot_bits",
+
+        // Bionic kernel uapi headers
+        ":libc_musl_sysroot_bionic_headers",
 
         // Libraries
         ":libc_musl",
@@ -713,6 +718,7 @@ cc_genrule {
     ],
     cmd: "includes=($(locations include/**/*.h)) && " +
         "bits=($(locations arch/generic/bits/*.h)) && " +
+        "android_bits=($(locations android/include/bits/*.h)) && " +
         "$(location soong_zip) -o $(genDir)/sysroot.zip " +
         " -j " +
         "  -f $(location LICENSE) " +
@@ -725,6 +731,9 @@ cc_genrule {
         "  -f $(location :libc_musl_syscall.h) " +
         "  -f $(location :libc_musl_alltypes.h) " +
         "  -D $$(dirname $${bits[0]}) " +
+        "  -D $$(dirname $${android_bits[0]}) " +
+        " -P include/sys -j " +
+        "  -f $(location android/include/sys/cdefs.h) " +
         // crt objects
         " -P lib -j " +
         "  -f $(location :libc_musl_crti) " +
@@ -767,7 +776,8 @@ cc_genrule {
         " lib/libc_musl_sysroot_static_empty.a:lib/libutil.a " +
         " lib/libc_musl_sysroot_static_empty.a:lib/libxnet.a " +
         " && " +
-        "$(location merge_zips) -ignore-duplicates $(out) $(location :libc_musl_sysroot_bits) $(genDir)/sysroot.zip $(genDir)/libs_renamed.zip",
+        "$(location merge_zips) -ignore-duplicates $(out) $(location :libc_musl_sysroot_bionic_headers) " +
+        " $(location :libc_musl_sysroot_bits) $(genDir)/sysroot.zip $(genDir)/libs_renamed.zip",
 }
 
 build=["sources.bp"]
