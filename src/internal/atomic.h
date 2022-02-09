@@ -330,4 +330,30 @@ static inline int a_clz_32(uint32_t x)
 }
 #endif
 
+#if defined __has_builtin
+#if __has_builtin(__builtin_popcount)
+#define a_popcount_32 a_popcount_32
+static inline int a_popcount_32(uint32_t x)
+{
+	return __builtin_popcount(x);
+}
+#endif
+#endif
+
+#ifndef a_popcount_32
+#define a_popcount_32 a_popcount_32
+static inline int a_popcount_32(uint32_t x)
+{
+	const uint32_t m1 = 0x55555555;
+	const uint32_t m2 = 0x33333333;
+	const uint32_t m4 = 0x0f0f0f0f;
+	x -= (x >> 1) & m1;
+	x = (x & m2) + ((x >> 2) & m2);
+	x = (x + (x >> 4)) & m4;
+	x += x >> 8;
+	x += x >> 16;
+	return x & 0x3f;
+}
+#endif
+
 #endif
