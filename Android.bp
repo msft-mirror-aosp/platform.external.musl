@@ -615,6 +615,23 @@ cc_library_static {
     ],
 }
 
+// The linker and trampoline compiled as a .o file to use as part of the sysroot
+// crt.
+cc_object {
+    name: "libc_musl_linker_object",
+    defaults: ["libc_musl_defaults"],
+    srcs: [
+        ":musl_linker_asm",
+        "android/ldso_trampoline.cpp",
+    ],
+    cflags: [
+        // These are required to make sure the C code in ldso_trampoline.c
+        // doesn't have any dependencies on libc.
+        "-fno-stack-protector",
+        "-ftrivial-auto-var-init=uninitialized",
+    ],
+}
+
 // The architecture-specific bits have to be handled separately because the label varies based
 // on architecture, which prevents using $(locations) to find them and requires using $(in)
 // instead, which would mix in all the other files if this were part of the main libc_musl_sysroot
@@ -696,11 +713,8 @@ cc_genrule {
         ":libc_musl_rcrt1",
         ":libc_musl_Scrt1",
 
-        // Embedded linker objects
-        ":libc_musl_crtbegin_dynamic",
-        ":libc_musl_crtbegin_static",
-        ":libc_musl_crtbegin_so",
-        ":libc_musl_crtend",
+        // Embedded linker objects and linker scripts
+        ":libc_musl_linker_object",
         ":musl_linker_script",
 
         // Wrapper scripts
@@ -719,6 +733,9 @@ cc_genrule {
     cmd: "includes=($(locations include/**/*.h)) && " +
         "bits=($(locations arch/generic/bits/*.h)) && " +
         "android_bits=($(locations android/include/bits/*.h)) && " +
+        "ln -s libc_musl.so $(genDir)/ld-musl.so.1 && " +
+        "echo -e 'GROUP ( Scrt1-real.o libc_musl_linker_object.o )\nINCLUDE linker.script' > $(genDir)/Scrt1.ld && " +
+        "echo -e 'GROUP ( libc_musl.so )' > $(genDir)/libc.so && " +
         "$(location soong_zip) -o $(genDir)/sysroot.zip " +
         " -j " +
         "  -f $(location LICENSE) " +
@@ -740,13 +757,13 @@ cc_genrule {
         "  -f $(location :libc_musl_crtn) " +
         "  -f $(location :libc_musl_crt1) " +
         "  -f $(location :libc_musl_rcrt1) " +
-        "  -f $(location :libc_musl_Scrt1) " +
         // embedded linker crt objects
-        "  -f $(location :libc_musl_crtbegin_dynamic) " +
-        "  -f $(location :libc_musl_crtbegin_static) " +
-        "  -f $(location :libc_musl_crtbegin_so) " +
-        "  -f $(location :libc_musl_crtend) " +
         "  -f $(location :musl_linker_script) " +
+        "  -f $(location :libc_musl_linker_object) " +
+        // libs
+        "  -f $(location :libc_musl) " +
+        "  -f $(genDir)/ld-musl.so.1 " +
+        "  -f $(genDir)/libc.so " +
         // clang wrappers
         " -P bin -j " +
         "  -f $(location :libc_musl_clang_wrapper) " +
@@ -755,17 +772,17 @@ cc_genrule {
         // libs in a separate zip so they can be renamed
         "$(location soong_zip) -o $(genDir)/libs.zip " +
         " -P lib -j " +
-        "  -f $(location :libc_musl) " +
-        "  -f $(location :libc_musl_for_sysroot) " +
         "  -f $(location :libc_musl_static) " +
         "  -f $(location :libc_musl_sysroot_static_empty) " +
+        "  -f $(genDir)/Scrt1.ld " +
+        "  -f $(location :libc_musl_Scrt1) " +
         " && " +
         "$(location zip2zip) -i $(genDir)/libs.zip -o $(genDir)/libs_renamed.zip " +
         // rename libs from module names to desired names in sysroot
         " lib/libc_musl_static.a:lib/libc.a " +
-        " lib/libc_musl.so:lib/libc_musl.so " +
-        " lib/libc_musl_for_sysroot.so:lib/libc.so " +
-        " lib/libc_musl_for_sysroot.so:lib/ld-musl.so.1 " +
+        // Swap in linker script for Scrt1.o
+        " lib/Scrt1.o:lib/Scrt1-real.o " +
+        " lib/Scrt1.ld:lib/Scrt1.o " +
         // copy empty static libs
         " lib/libc_musl_sysroot_static_empty.a:lib/libcrypt.a " +
         " lib/libc_musl_sysroot_static_empty.a:lib/libdl.a " +
