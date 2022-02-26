@@ -701,10 +701,16 @@ cc_genrule {
         // Bionic kernel uapi headers
         ":libc_musl_sysroot_bionic_headers",
 
+        // libc++ headers
+        ":libc_musl_sysroot_libc++_headers",
+        ":libc_musl_sysroot_libc++abi_headers",
+
         // Libraries
         ":libc_musl",
         ":libc_musl_for_sysroot",
         ":libc_musl_static",
+        ":libc++abi",
+        ":libc++",
 
         // Objects
         ":libc_musl_crti",
@@ -762,6 +768,8 @@ cc_genrule {
         "  -f $(location :libc_musl_linker_object) " +
         // libs
         "  -f $(location :libc_musl) " +
+        "  -f $(location :libc++abi) " +
+        "  -f $(location :libc++) " +
         "  -f $(genDir)/ld-musl.so.1 " +
         "  -f $(genDir)/libc.so " +
         // clang wrappers
@@ -793,8 +801,13 @@ cc_genrule {
         " lib/libc_musl_sysroot_static_empty.a:lib/libutil.a " +
         " lib/libc_musl_sysroot_static_empty.a:lib/libxnet.a " +
         " && " +
-        "$(location merge_zips) -ignore-duplicates $(out) $(location :libc_musl_sysroot_bionic_headers) " +
-        " $(location :libc_musl_sysroot_bits) $(genDir)/sysroot.zip $(genDir)/libs_renamed.zip",
+        "$(location merge_zips) -ignore-duplicates $(out) " +
+        " $(location :libc_musl_sysroot_bionic_headers) " +
+        " $(location :libc_musl_sysroot_libc++_headers) " +
+        " $(location :libc_musl_sysroot_libc++abi_headers) " +
+        " $(location :libc_musl_sysroot_bits) " +
+        " $(genDir)/sysroot.zip " +
+        " $(genDir)/libs_renamed.zip",
 }
 
 build=["sources.bp"]
