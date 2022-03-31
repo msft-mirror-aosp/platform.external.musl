@@ -235,6 +235,7 @@ cc_library_static {
         "libc_musl_nossp",
         "libexecinfo",
         "libb64",
+        "libunwind",
     ],
     multilib: {
         lib32: {
