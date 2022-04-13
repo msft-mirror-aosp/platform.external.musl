@@ -303,6 +303,7 @@ cc_defaults {
         "src/locale/setlocale.c",
         "src/locale/strcoll.c",
         "src/locale/strfmon.c",
+        "src/locale/strtod_l.c",
         "src/locale/strxfrm.c",
         "src/locale/textdomain.c",
         "src/locale/uselocale.c",
