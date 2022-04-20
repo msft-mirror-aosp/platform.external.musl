@@ -389,10 +389,21 @@ cc_genrule {
 // The musl CRT objects
 //
 
+cc_defaults {
+    name: "libc_musl_crt_defaults",
+    defaults: ["libc_musl_defaults"],
+    cflags: [
+        // These are required to make sure the C code in crt/*.c
+        // doesn't have any dependencies on libc.
+        "-fno-stack-protector",
+        "-ftrivial-auto-var-init=uninitialized",
+    ],
+}
+
 cc_object {
     name: "libc_musl_crt1",
     defaults: [
-        "libc_musl_defaults",
+        "libc_musl_crt_defaults",
         "libc_musl_crt1_sources",
     ],
 }
@@ -400,7 +411,7 @@ cc_object {
 cc_object {
     name: "libc_musl_crti",
     defaults: [
-        "libc_musl_defaults",
+        "libc_musl_crt_defaults",
         "libc_musl_crti_sources",
     ],
 }
@@ -408,7 +419,7 @@ cc_object {
 cc_object {
     name: "libc_musl_crtn",
     defaults: [
-        "libc_musl_defaults",
+        "libc_musl_crt_defaults",
         "libc_musl_crtn_sources",
     ],
 }
@@ -416,7 +427,7 @@ cc_object {
 cc_object {
     name: "libc_musl_rcrt1",
     defaults: [
-        "libc_musl_defaults",
+        "libc_musl_crt_defaults",
         "libc_musl_rcrt1_sources",
     ],
 }
@@ -424,7 +435,7 @@ cc_object {
 cc_object {
     name: "libc_musl_Scrt1",
     defaults: [
-        "libc_musl_defaults",
+        "libc_musl_crt_defaults",
         "libc_musl_Scrt1_sources",
     ],
 }
