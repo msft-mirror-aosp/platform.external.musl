@@ -723,6 +723,7 @@ cc_genrule {
         ":libc_musl_static",
         ":libc++abi",
         ":libc++",
+        ":libc++_static",
 
         // Objects
         ":libc_musl_crti",
@@ -730,6 +731,8 @@ cc_genrule {
         ":libc_musl_crt1",
         ":libc_musl_rcrt1",
         ":libc_musl_Scrt1",
+        ":clang_rt.crtbegin",
+        ":clang_rt.crtend",
 
         // Embedded linker objects and linker scripts
         ":libc_musl_linker_object",
@@ -796,10 +799,14 @@ cc_genrule {
         "  -f $(location :libc_musl_sysroot_static_empty) " +
         "  -f $(genDir)/Scrt1.ld " +
         "  -f $(location :libc_musl_Scrt1) " +
+        "  -f $(location :libc++_static) " +
+        "  -f $(location :clang_rt.crtbegin) " +
+        "  -f $(location :clang_rt.crtend) " +
         " && " +
         "$(location zip2zip) -i $(genDir)/libs.zip -o $(genDir)/libs_renamed.zip " +
         // rename libs from module names to desired names in sysroot
         " lib/libc_musl_static.a:lib/libc.a " +
+        " lib/libc++_static.a:lib/libc++.a " +
         // Swap in linker script for Scrt1.o
         " lib/Scrt1.o:lib/Scrt1-real.o " +
         " lib/Scrt1.ld:lib/Scrt1.o " +
@@ -812,6 +819,12 @@ cc_genrule {
         " lib/libc_musl_sysroot_static_empty.a:lib/librt.a " +
         " lib/libc_musl_sysroot_static_empty.a:lib/libutil.a " +
         " lib/libc_musl_sysroot_static_empty.a:lib/libxnet.a " +
+        // rename clang crt objects to gcc names
+        " lib/clang_rt.crtbegin.o:lib/crtbegin.o " +
+        " lib/clang_rt.crtbegin.o:lib/crtbeginS.o " +
+        " lib/clang_rt.crtbegin.o:lib/crtbeginT.o " +
+        " lib/clang_rt.crtend.o:lib/crtend.o " +
+        " lib/clang_rt.crtend.o:lib/crtendS.o " +
         " && " +
         "$(location merge_zips) -ignore-duplicates $(out) " +
         " $(location :libc_musl_sysroot_bionic_headers) " +
