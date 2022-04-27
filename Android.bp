@@ -307,19 +307,6 @@ cc_library_static {
     ],
 }
 
-// Musl sources for the dynamic linker when used in the sysroot.
-cc_library_static {
-    name: "libc_musl_ldso_sysroot",
-    defaults: [
-        "libc_musl_defaults",
-        "libc_musl_ldso_sources",
-    ],
-    cflags: [
-        "-fno-stack-protector",
-        "-DLIBC_SONAME=libc.so",
-    ],
-}
-
 // An attempt to compile the dynamic linker as a standalone library separate from libc_musl.so.
 // Not used yet.
 cc_library_shared {
@@ -602,22 +589,6 @@ cc_genrule {
 //
 
 
-// A copy of libc_musl that uses libc.so as its soname for putting in the sysroot.
-cc_library_shared {
-    name: "libc_musl_for_sysroot",
-    defaults: ["libc_musl_defaults"],
-    whole_static_libs: ["libc_musl_static"],
-    shared: {
-        whole_static_libs: ["libc_musl_ldso_sysroot"],
-    },
-    ldflags: [
-        "-Wl,-e,_dlstart",
-        "-nostdlib",
-        "-Wl,--soname,libc.so",
-    ],
-    dynamic_list: "dynamic.list",
-}
-
 // An empty static library that will be copied to libdl.a, etc. in the sysroot.
 // Shouldn't be used by anything else besides the sysroot cc_genrule.
 cc_library_static {
@@ -719,7 +690,6 @@ cc_genrule {
 
         // Libraries
         ":libc_musl",
-        ":libc_musl_for_sysroot",
         ":libc_musl_static",
         ":libc++abi",
         ":libc++",
