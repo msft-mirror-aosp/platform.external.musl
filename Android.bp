@@ -658,6 +658,11 @@ genrule {
         "chmod a+x $(out)",
 }
 
+cc_library_host_static {
+    name: "libz_static_for_sysroot",
+    whole_static_libs: ["libz"],
+}
+
 cc_genrule {
     name: "libc_musl_sysroot",
     host_supported: true,
@@ -687,6 +692,7 @@ cc_genrule {
         // libc++ headers
         ":libc_musl_sysroot_libc++_headers",
         ":libc_musl_sysroot_libc++abi_headers",
+        ":libc_musl_sysroot_zlib_headers",
 
         // Libraries
         ":libc_musl",
@@ -694,6 +700,7 @@ cc_genrule {
         ":libc++abi",
         ":libc++",
         ":libc++_static",
+        ":libz_static_for_sysroot",
 
         // Objects
         ":libc_musl_crti",
@@ -772,6 +779,7 @@ cc_genrule {
         "  -f $(location :libc++_static) " +
         "  -f $(location :clang_rt.crtbegin) " +
         "  -f $(location :clang_rt.crtend) " +
+        "  -f $(location :libz_static_for_sysroot) " +
         " && " +
         "$(location zip2zip) -i $(genDir)/libs.zip -o $(genDir)/libs_renamed.zip " +
         // rename libs from module names to desired names in sysroot
@@ -795,11 +803,14 @@ cc_genrule {
         " lib/clang_rt.crtbegin.o:lib/crtbeginT.o " +
         " lib/clang_rt.crtend.o:lib/crtend.o " +
         " lib/clang_rt.crtend.o:lib/crtendS.o " +
+        // rename static libz
+        " lib/libz_static_for_sysroot.a:lib/libz.a " +
         " && " +
         "$(location merge_zips) -ignore-duplicates $(out) " +
         " $(location :libc_musl_sysroot_bionic_headers) " +
         " $(location :libc_musl_sysroot_libc++_headers) " +
         " $(location :libc_musl_sysroot_libc++abi_headers) " +
+        " $(location :libc_musl_sysroot_zlib_headers) " +
         " $(location :libc_musl_sysroot_bits) " +
         " $(genDir)/sysroot.zip " +
         " $(genDir)/libs_renamed.zip",
