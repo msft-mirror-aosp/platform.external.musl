@@ -45,7 +45,7 @@ __attribute__((visibility("hidden"))) extern const char __dlwrap_linker;
 __attribute__((visibility("hidden"))) extern const char __dlwrap_linker_end;
 
 // The real entry point of the binary to use after linker bootstrapping.
-extern "C" void _start();
+__attribute__((visibility("hidden"))) extern "C" void _start();
 
 // Allocate some R/W memory to store a copy of the program headers.
 static ElfW(Phdr) phdr_copy[64];
