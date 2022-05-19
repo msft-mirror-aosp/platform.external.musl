@@ -151,6 +151,7 @@ static struct fdpic_loadmap *app_loadmap;
 static struct fdpic_dummy_loadmap app_dummy_loadmap;
 
 struct debug *_dl_debug_addr = &debug;
+static void (*exe_dl_debug_state)(void) = 0;
 
 extern hidden int __malloc_replaced;
 
@@ -1561,6 +1562,8 @@ void __libc_start_init(void)
 
 static void dl_debug_state(void)
 {
+	if (exe_dl_debug_state)
+		exe_dl_debug_state();
 }
 
 weak_alias(dl_debug_state, _dl_debug_state);
@@ -1982,6 +1985,12 @@ void __dls3(size_t *sp, size_t *auxv)
 		__malloc_replaced = 1;
 	if (find_sym(head, "aligned_alloc", 1).dso != &ldso)
 		__aligned_alloc_replaced = 1;
+
+	/* Determine if another DSO is providing the _dl_debug_state symbol
+	 * and forward calls to it. */
+	struct symdef debug_sym = find_sym(head, "_dl_debug_state", 1);
+	if (debug_sym.dso != &ldso)
+		exe_dl_debug_state = (void (*)(void))laddr(debug_sym.dso, debug_sym.sym->st_value);
 
 	/* Switch to runtime mode: any further failures in the dynamic
 	 * linker are a reportable failure rather than a fatal startup
