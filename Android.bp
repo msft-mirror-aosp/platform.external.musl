@@ -444,6 +444,7 @@ cc_object {
     srcs: [
         ":musl_linker_asm",
         "android/ldso_trampoline.cpp",
+        "android/ldso_trampoline_debugger.c",
     ],
     cflags: [
         // These are required to make sure the C code in ldso_trampoline.c
