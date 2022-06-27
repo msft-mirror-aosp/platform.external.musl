@@ -86,7 +86,6 @@ cc_defaults {
         // CFLAGS_C99FSE
         "-nostdinc",
         "-ffreestanding",
-        "-frounding-math",
         "-Wa,--noexecstack",
 
         // CFLAGS_AUTO
@@ -137,6 +136,21 @@ cc_defaults {
         "-Wno-string-plus-int",
         "-Wno-unused-parameter",
     ],
+
+    arch: {
+        x86: {
+            cflags: ["-frounding-math"],
+        },
+        x86_64: {
+            cflags: ["-frounding-math"],
+        },
+        arm: {
+            cflags: ["-Wno-ignored-pragmas"],
+        },
+        arm64: {
+            cflags: ["-Wno-ignored-pragmas"],
+        },
+    },
 
     ldflags: [
         "-Wl,--sort-section,alignment",
