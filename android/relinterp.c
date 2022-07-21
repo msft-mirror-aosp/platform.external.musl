@@ -39,11 +39,13 @@
 #include <sys/user.h>
 #include <unistd.h>
 
+#include "reloc.h"
+#include "syscall.h"
+
 typedef void EntryFunc(void);
 
-long ri_syscall(long syscall, ...);
 void _start(void);
-static EntryFunc* ri_main(void* raw_args) __attribute__((used));
+static void __ri__start_c(void* raw_args) __attribute__((used));
 
 #define PAGE_START(x) ((x) & PAGE_MASK)
 #define PAGE_END(x) PAGE_START((x) + (PAGE_SIZE - 1))
@@ -51,57 +53,9 @@ static EntryFunc* ri_main(void* raw_args) __attribute__((used));
 #define ROUND_UP(x, y) (((x) + (y) - 1) / (y) * (y))
 #define NOTE_SECTION_NAME ".note.google.relinterp"
 
-// The stack pointer should be 16-byte-aligned at the first instruction of the entry point.
-//
-// This entry point can be invoke between relocating the executable and transferring control to the
-// real entry point (e.g. if the user invokes the loader directly, but also in the normal use case).
-// Save and restore arguments from the loader to the entry point.
-asm(
-  ".globl __relinterp_start\n"
-  "__relinterp_start:\n"
-  // TODO: annotate with cfi (do we need to stop unwinding at this frame?)
-  "  push %rbp\n"
-  "  mov %rsp, %rbp\n"
-  "  sub $0x38, %rsp\n"
-  "  mov %rdi, 0x0(%rsp)\n"
-  "  mov %rsi, 0x8(%rsp)\n"
-  "  mov %rdx, 0x10(%rsp)\n"
-  "  mov %rcx, 0x18(%rsp)\n"
-  "  mov %r8, 0x20(%rsp)\n"
-  "  mov %r9, 0x28(%rsp)\n"
-  "  lea 0x8(%rbp), %rdi\n"
-  // The stack pointer should be 16-byte aligned before this call instruction.
-  // TODO: it might be better to realign the stack here rather than assume the caller/kernel did it right.
-  "  call ri_main\n"
-  "  mov 0x0(%rsp), %rdi\n"
-  "  mov 0x8(%rsp), %rsi\n"
-  "  mov 0x10(%rsp), %rdx\n"
-  "  mov 0x18(%rsp), %rcx\n"
-  "  mov 0x20(%rsp), %r8\n"
-  "  mov 0x28(%rsp), %r9\n"
-  "  mov %rbp, %rsp\n"
-  "  pop %rbp\n"
-  "  jmp *%rax\n"
-);
+#define START "__ri__start"
 
-asm(
-  "ri_syscall:\n"
-  "  mov %edi, %eax\n"
-  "  mov %rsi, %rdi\n"
-  "  mov %rdx, %rsi\n"
-  "  mov %rcx, %rdx\n"
-  "  mov %r8,  %r10\n"
-  "  mov %r9,  %r8\n"
-  "  mov 8(%rsp), %r9\n"
-  "  syscall\n"
-  "  cmpq $-4095, %rax\n"
-  "  jb 1f\n"
-  "  negl %eax\n"
-  "  movl %eax, %edi\n"
-  "  call ri_set_errno\n"
-  "1:\n"
-  "  ret\n"
-);
+#include "crt_arch.h"
 
 // With lld, these variables should be output into .rodata and placed into the first PT_LOAD
 // segment.
@@ -110,7 +64,7 @@ static const char kVirtualInterp[PATH_MAX];
 
 // Ensure that this file's executable code is in a different page from the virtual table above, if
 // the executable uses an initial read-exec PT_LOAD.
-asm(".space 4096");
+__asm__ (".space 4096");
 
 static bool g_debug = false;
 static const char* g_prog_name = NULL;
@@ -119,10 +73,15 @@ static int g_errno = 0;
 __attribute__((visibility("hidden"))) extern ElfW(Dyn) _DYNAMIC[];
 
 __attribute__((used))
-static long ri_set_errno(int val) {
-  g_errno = val;
-  return -1;
+static long ri_set_errno(unsigned long val) {
+  if (val > -4096UL) {
+    g_errno = -val;
+    return -1;
+  }
+  return val;
 }
+
+#define ri_syscall(...) ri_set_errno(__syscall(__VA_ARGS__))
 
 static ssize_t ri_write(int fd, const void* buf, size_t amt) {
   return ri_syscall(SYS_write, fd, buf, amt);
@@ -721,7 +680,7 @@ static bool is_exe_relocated(void) {
   return read_environ != NULL;
 }
 
-static EntryFunc* ri_main(void* raw_args) {
+static void __ri__start_c(void* raw_args) {
   const KernelArguments args = read_args(raw_args);
   for (size_t i = 0; i < args.envp_count; ++i) {
     if (!ri_strcmp(args.envp[i], "RELINTERP_DEBUG=1")) {
@@ -734,7 +693,7 @@ static EntryFunc* ri_main(void* raw_args) {
 
   if (is_exe_relocated()) {
     debug("ri_main: exe is already relocated, jumping to _start");
-    return _start;
+    CRTJMP(_start, raw_args);
   }
 
   debug("entering ri_main");
@@ -777,13 +736,13 @@ static EntryFunc* ri_main(void* raw_args) {
       debug("new auxv:");
       dump_auxv(&args);
       debug("transferring to real loader");
-      return interp.entry;
+      CRTJMP(interp.entry, raw_args);
     }
   }
   fatal("AT_BASE not found in aux vector");
 }
 
-asm(
+__asm__ (
 "  .section " NOTE_SECTION_NAME ",\"a\",%note\n"
 "  .balign 4\n"
 "  .type relinterp, %object\n"
