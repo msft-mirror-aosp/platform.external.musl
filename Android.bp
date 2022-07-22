@@ -89,8 +89,7 @@ cc_defaults {
         "-Wa,--noexecstack",
 
         // CFLAGS_AUTO
-        //"-Os",
-        "-O0",
+        "-Os",
         "-pipe",
         "-fomit-frame-pointer",
         "-fno-unwind-tables",
