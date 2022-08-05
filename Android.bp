@@ -436,7 +436,7 @@ cc_object {
         "android/relinterp.c",
         "android/ldso_trampoline_debugger.c",
     ],
-    cflags: ["-DLOADER_PATH=\"../lib64/libc_musl.so\""],
+    cflags: ["-DLOADER_PATH=\"libc_musl.so\""],
 }
 
 cc_object {
@@ -593,7 +593,7 @@ cc_object {
         "android/relinterp.c",
         "android/ldso_trampoline_debugger.c",
     ],
-    cflags: ["-DLOADER_PATH=\"../lib64/libc_musl.so\""],
+    cflags: ["-DLOADER_PATH=\"libc_musl.so\""],
 }
 
 // The architecture-specific bits have to be handled separately because the label varies based

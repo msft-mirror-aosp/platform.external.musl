@@ -179,9 +179,24 @@ static char* ri_strrchr(const char* str, int ch) {
   return result;
 }
 
+static char* ri_strchr(const char* str, int ch) {
+  while (*str) {
+    if (*str == ch) return (char*)str;
+    ++str;
+  }
+  return NULL;
+}
+
 static void ri_dirname(char* path) {
   char* last_slash = ri_strrchr(path, '/');
-  if (last_slash > path) *last_slash = '\0';
+  if (last_slash == NULL) {
+    path[0] = '.';   // returns "."
+    path[1] = '\0';
+  } else if (last_slash == path) {
+    path[1] = '\0';  // returns "/"
+  } else {
+    *last_slash = '\0';
+  }
 }
 
 static void out_str_n(const char* str, size_t n) {
@@ -357,12 +372,17 @@ static void dump_auxv(const KernelArguments* args) {
     const char* name = "";
     switch (args->auxv[i].key) {
       case AT_BASE: name = " [AT_BASE]"; break;
+      case AT_EGID: name = " [AT_EGID]"; break;
+      case AT_ENTRY: name = " [AT_ENTRY]"; break;
+      case AT_EUID: name = " [AT_EUID]"; break;
+      case AT_GID: name = " [AT_GID]"; break;
       case AT_PHDR: name = " [AT_PHDR]"; break;
       case AT_PHENT: name = " [AT_PHENT]"; break;
       case AT_PHNUM: name = " [AT_PHNUM]"; break;
-      case AT_ENTRY: name = " [AT_ENTRY]"; break;
+      case AT_SECURE: name = " [AT_SECURE]"; break;
       case AT_SYSINFO: name = " [AT_SYSINFO]"; break;
       case AT_SYSINFO_EHDR: name = " [AT_SYSINFO_EHDR]"; break;
+      case AT_UID: name = " [AT_UID]"; break;
     }
     debug("  %lu => 0x%lx%s", args->auxv[i].key, args->auxv[i].value, name);
   }
@@ -463,14 +483,23 @@ typedef struct {
   ElfW(Phdr)* phdr;
   size_t phdr_count;
   uintptr_t load_bias;
+  char* search_paths;
   ElfW(Ehdr)* ehdr;
   ElfW(Phdr)* first_load;
+  bool secure;
 } ExeInfo;
 
 static ExeInfo get_exe_info(const KernelArguments* args) {
   ExeInfo result = { 0 };
   result.phdr = (ElfW(Phdr)*)ri_getauxval(args, AT_PHDR, false);
   result.phdr_count = ri_getauxval(args, AT_PHNUM, false);
+
+  unsigned long uid = ri_getauxval(args, AT_UID, false);
+  unsigned long euid = ri_getauxval(args, AT_EUID, false);
+  unsigned long gid = ri_getauxval(args, AT_GID, false);
+  unsigned long egid = ri_getauxval(args, AT_EGID, false);
+  unsigned long secure = ri_getauxval(args, AT_SECURE, true);
+  result.secure = uid != euid || gid != egid || secure;
 
   debug("orig phdr     = %p", (void*)result.phdr);
   debug("orig phnum    = %zu", result.phdr_count);
@@ -495,6 +524,26 @@ static ExeInfo get_exe_info(const KernelArguments* args) {
   }
   debug("ehdr          = %p", (void*)result.ehdr);
 
+  ElfW(Word) runpath_offset = -1;
+  char* strtab = NULL;
+  for (ElfW(Dyn)* dyn = _DYNAMIC; dyn->d_tag != DT_NULL; dyn++) {
+    switch (dyn->d_tag) {
+    case DT_RUNPATH:
+      runpath_offset = dyn->d_un.d_val;
+      break;
+    case DT_RPATH:
+      if (runpath_offset == -1) runpath_offset = dyn->d_un.d_val;
+      break;
+    case DT_STRTAB:
+      strtab = (char*)(dyn->d_un.d_ptr + result.load_bias);
+      break;
+    }
+  }
+
+  if (strtab && runpath_offset != -1) {
+    result.search_paths = strtab + runpath_offset;
+    debug("dt_runpath    = %s", result.search_paths);
+  }
   return result;
 }
 
@@ -627,37 +676,141 @@ static void realpath_fd(int fd, const char* orig_path, char* out, size_t len) {
   if ((size_t)result >= len) fatal("realpath of %s too long", orig_path);
 }
 
-static OpenedLoader open_loader(const ExeInfo* exe) {
+static int open_loader(const char* path, OpenedLoader* loader) {
+  debug("trying to open '%s'", path);
+  loader->fd = ri_open(path, O_RDONLY, 0);
+  if (loader->fd < 0) {
+    debug("could not open loader %s: %s", path, ri_strerror(g_errno));
+    return -1;
+  }
+
+  realpath_fd(loader->fd, path, loader->path, sizeof(loader->path));
+
+  return 0;
+}
+
+static int open_rel_loader(const char* dir, const char* rel, OpenedLoader* loader) {
+  char buf[PATH_MAX];
+
+  size_t dir_len = ri_strlen(dir);
+
+  if (dir_len + (dir_len == 0 ? 1 : 0) + ri_strlen(rel) + 2 > sizeof(buf)) {
+    debug("path to loader exceeds PATH_MAX: %s/%s", dir, rel);
+    return 1;
+  }
+
+  if (dir_len == 0) {
+    ri_strcpy(buf, ".");
+  } else {
+    ri_strcpy(buf, dir);
+    if (dir[dir_len-1] != '/') {
+      ri_strcat(buf, "/");
+    }
+  }
+  ri_strcat(buf, rel);
+
+  return open_loader(buf, loader);
+}
+
+static void get_origin(char* buf, size_t buf_len) {
+  ssize_t len = ri_readlink("/proc/self/exe", buf, buf_len);
+  if (len <= 0 || (size_t)len >= buf_len) {
+    fatal("could not readlink /proc/self/exe: %s", ri_strerror(g_errno));
+  }
+  buf[len] = '\0';
+
+  ri_dirname(buf);
+}
+
+static int search_path_list_for_loader(const char* loader_rel_path, const char* search_path,
+                                       const char* search_path_name, bool expand_origin, OpenedLoader *loader) {
+  char origin_buf[PATH_MAX];
+  char* origin = NULL;
+
+  const char* p = search_path;
+  while (p && p[0]) {
+    const char* start = p;
+    const char* end = ri_strchr(p, ':');
+    if (end == NULL) {
+      end = start + ri_strlen(p);
+      p = NULL;
+    } else {
+      p = end + 1;
+    }
+    size_t n = end - start;
+    char search_path_entry[PATH_MAX];
+    if (n >= sizeof(search_path_entry)) {
+      // Too long, skip.
+      debug("%s entry too long: %s", search_path_name, start);
+      continue;
+    }
+
+    ri_memcpy(search_path_entry, start, n);
+    search_path_entry[n] = '\0';
+
+    char buf[PATH_MAX];
+    char* d = NULL;
+    if (expand_origin) {
+      d = ri_strchr(search_path_entry, '$');
+    }
+    if (d && (!ri_strncmp(d, "$ORIGIN", 7) || !ri_strncmp(d, "${ORIGIN}", 9))) {
+      if (!origin) {
+        get_origin(origin_buf, sizeof(origin_buf));
+        origin = origin_buf;
+      }
+
+      size_t s = 7;
+      if (d[1] == '{') {
+        s += 2;
+      }
+      ri_memcpy(buf, search_path_entry, d - search_path_entry);
+      buf[d - search_path_entry] = '\0';
+      if (ri_strlen(buf) + ri_strlen(origin) + ri_strlen(d+s) >= sizeof(buf)) {
+        debug("path to loader %s%s%s too long", buf, origin, d+s);
+        continue;
+      }
+
+      ri_strcat(buf, origin);
+      ri_strcat(buf, d+s);
+      debug("trying loader %s at %s", loader_rel_path, buf);
+    } else {
+      ri_strcpy(buf, search_path_entry);
+    }
+    if (!open_rel_loader(buf, loader_rel_path, loader)) {
+      return 0;
+    }
+  }
+
+  return -1;
+}
+
+static int find_and_open_loader(const ExeInfo* exe, const char* ld_library_path, OpenedLoader* loader) {
   const char* loader_rel_path = read_relinterp_note(exe);
-  char tmp[PATH_MAX];
 
   if (loader_rel_path[0] == '/') {
-    tmp[0] = '\0';
-  } else {
-    // If /proc isn't mounted, this error will be visible to an end user.
-    ssize_t len = ri_readlink("/proc/self/exe", tmp, sizeof(tmp));
-    if (len <= 0 || (size_t)len >= sizeof(tmp)) {
-      fatal("could not readlink /proc/self/exe: %s", ri_strerror(g_errno));
-    }
-    tmp[len] = '\0';
-
-    ri_dirname(tmp);
-    ri_strcat(tmp, "/");
+    return open_loader(loader_rel_path, loader);
   }
 
-  OpenedLoader result;
-  if (ri_strlen(tmp) + ri_strlen(loader_rel_path) + 1 > sizeof(tmp)) {
-    fatal("path to loader exceeds PATH_MAX: %s%s", tmp, loader_rel_path);
+  if (exe->secure) {
+    fatal("relinterp not supported for secure executables");
   }
 
-  ri_strcat(tmp, loader_rel_path);
+  if (!search_path_list_for_loader(loader_rel_path, ld_library_path, "LD_LIBRARY_PATH", false, loader)) {
+    return 0;
+  }
 
-  debug("trying to open '%s'", tmp);
-  result.fd = ri_open(tmp, O_RDONLY, 0);
-  if (result.fd < 0) fatal("could not open loader %s: %s", tmp, ri_strerror(g_errno));
+  if (!exe->search_paths || ri_strlen(exe->search_paths) == 0) {
+    // If no DT_RUNPATH search relative to the exe.
+    char origin[PATH_MAX];
+    get_origin(origin, sizeof(origin));
+    return open_rel_loader(origin, loader_rel_path, loader);
+  }
 
-  realpath_fd(result.fd, tmp, result.path, sizeof(result.path));
-  return result;
+  if (!search_path_list_for_loader(loader_rel_path, exe->search_paths, "rpath", true, loader)) {
+    return 0;
+  }
+
+  fatal("unable to find loader %s in rpath %s", loader_rel_path, exe->search_paths);
 }
 
 // Use a trick to determine whether the executable has been relocated yet. This variable points to
@@ -682,9 +835,14 @@ static bool is_exe_relocated(void) {
 
 static void __ri__start_c(void* raw_args) {
   const KernelArguments args = read_args(raw_args);
+  const char* ld_library_path = NULL;
+
   for (size_t i = 0; i < args.envp_count; ++i) {
     if (!ri_strcmp(args.envp[i], "RELINTERP_DEBUG=1")) {
       g_debug = true;
+    }
+    if (!ri_strncmp(args.envp[i], "LD_LIBRARY_PATH=", 16)) {
+      ld_library_path = args.envp[i] + 16;
     }
   }
   if (args.argc >= 1) {
@@ -699,7 +857,10 @@ static void __ri__start_c(void* raw_args) {
   debug("entering ri_main");
 
   const ExeInfo exe = get_exe_info(&args);
-  OpenedLoader loader = open_loader(&exe);
+  OpenedLoader loader;
+  if (find_and_open_loader(&exe, ld_library_path, &loader)) {
+    fatal("failed to open loader");
+  }
   off_t len = ri_lseek(loader.fd, 0, SEEK_END);
   if (len == (off_t)-1) fatal("lseek on %s failed: %s", loader.path, ri_strerror(g_errno));
 
