@@ -47,7 +47,12 @@ typedef void EntryFunc(void);
 void _start(void);
 static void __ri__start_c(void* raw_args) __attribute__((used));
 
-#define PAGE_START(x) ((x) & PAGE_MASK)
+// arm64 doesn't have a constant page size and has to use the value from AT_PAGESZ.
+#ifndef PAGE_SIZE
+#define PAGE_SIZE g_page_size
+#endif
+
+#define PAGE_START(x) ((x) & (~(PAGE_SIZE-1)))
 #define PAGE_END(x) PAGE_START((x) + (PAGE_SIZE - 1))
 #define NT_TYPE_RELINTERP 5
 #define ROUND_UP(x, y) (((x) + (y) - 1) / (y) * (y))
@@ -68,6 +73,7 @@ __asm__ (".space 4096");
 
 static bool g_debug = false;
 static const char* g_prog_name = NULL;
+static uintptr_t g_page_size = 0;
 static int g_errno = 0;
 
 __attribute__((visibility("hidden"))) extern ElfW(Dyn) _DYNAMIC[];
@@ -94,7 +100,7 @@ static void ri_exit(int status) {
 }
 
 static int ri_open(const char* path, int flags, mode_t mode) {
-  return ri_syscall(SYS_open, path, flags, mode);
+  return ri_syscall(SYS_openat, AT_FDCWD, path, flags, mode);
 }
 
 static int ri_close(int fd) {
@@ -110,7 +116,11 @@ static ssize_t ri_readlink(const char* path, char* buf, size_t size) {
 }
 
 static void* ri_mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset) {
+#ifdef SYS_mmap2
+  return (void*)ri_syscall(SYS_mmap2, addr, length, prot, flags, fd, offset/SYSCALL_MMAP2_UNIT);
+#else
   return (void*)ri_syscall(SYS_mmap, addr, length, prot, flags, fd, offset);
+#endif
 }
 
 static void* ri_munmap(void* addr, size_t length) {
@@ -376,6 +386,7 @@ static void dump_auxv(const KernelArguments* args) {
       case AT_ENTRY: name = " [AT_ENTRY]"; break;
       case AT_EUID: name = " [AT_EUID]"; break;
       case AT_GID: name = " [AT_GID]"; break;
+      case AT_PAGESZ: name = " [AT_PAGESZ]"; break;
       case AT_PHDR: name = " [AT_PHDR]"; break;
       case AT_PHENT: name = " [AT_PHENT]"; break;
       case AT_PHNUM: name = " [AT_PHNUM]"; break;
@@ -483,6 +494,7 @@ typedef struct {
   ElfW(Phdr)* phdr;
   size_t phdr_count;
   uintptr_t load_bias;
+  uintptr_t page_size;
   char* search_paths;
   ElfW(Ehdr)* ehdr;
   ElfW(Phdr)* first_load;
@@ -493,6 +505,7 @@ static ExeInfo get_exe_info(const KernelArguments* args) {
   ExeInfo result = { 0 };
   result.phdr = (ElfW(Phdr)*)ri_getauxval(args, AT_PHDR, false);
   result.phdr_count = ri_getauxval(args, AT_PHNUM, false);
+  result.page_size = ri_getauxval(args, AT_PAGESZ, false);
 
   unsigned long uid = ri_getauxval(args, AT_UID, false);
   unsigned long euid = ri_getauxval(args, AT_EUID, false);
@@ -567,8 +580,8 @@ static void insert_pt_interp_into_phdr_table(const KernelArguments* args, const 
     (uintptr_t)(&kVirtualTable + 1),
     (uintptr_t)(&kVirtualInterp + 1)));
 
-  debug("remap_start   = 0x%lx", remap_start);
-  debug("remap_end     = 0x%lx", remap_end);
+  debug("remap_start   = 0x%lx", (unsigned long)remap_start);
+  debug("remap_end     = 0x%lx", (unsigned long)remap_end);
 
   uintptr_t first_load_start = exe->load_bias + exe->first_load->p_vaddr;
   uintptr_t first_load_end = first_load_start + exe->first_load->p_memsz;
@@ -857,6 +870,8 @@ static void __ri__start_c(void* raw_args) {
   debug("entering ri_main");
 
   const ExeInfo exe = get_exe_info(&args);
+  g_page_size = exe.page_size;
+
   OpenedLoader loader;
   if (find_and_open_loader(&exe, ld_library_path, &loader)) {
     fatal("failed to open loader");
