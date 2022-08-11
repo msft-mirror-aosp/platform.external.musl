@@ -39,15 +39,6 @@
 #include <sys/user.h>
 #include <unistd.h>
 
-// TODO: validation: run `nm --undefined-only entry.o` and make sure that only `_start` is there
-// (e.g. no libc functions).
-
-// glibc needs this, and musl might not need it. (With musl, the loader's pathname is probably just
-// "libc.so" if this is omitted.)
-#ifndef INSERT_PT_INTERP_INTO_PHDR_TABLE
-#define INSERT_PT_INTERP_INTO_PHDR_TABLE 1
-#endif
-
 typedef void EntryFunc(void);
 
 long ri_syscall(long syscall, ...);
@@ -112,7 +103,6 @@ asm(
   "  ret\n"
 );
 
-#if INSERT_PT_INTERP_INTO_PHDR_TABLE
 // With lld, these variables should be output into .rodata and placed into the first PT_LOAD
 // segment.
 static const ElfW(Phdr) kVirtualTable[64];
@@ -121,7 +111,6 @@ static const char kVirtualInterp[PATH_MAX];
 // Ensure that this file's executable code is in a different page from the virtual table above, if
 // the executable uses an initial read-exec PT_LOAD.
 asm(".space 4096");
-#endif
 
 static bool g_debug = false;
 static const char* g_prog_name = NULL;
@@ -515,10 +504,8 @@ typedef struct {
   ElfW(Phdr)* phdr;
   size_t phdr_count;
   uintptr_t load_bias;
-#if INSERT_PT_INTERP_INTO_PHDR_TABLE
   ElfW(Ehdr)* ehdr;
   ElfW(Phdr)* first_load;
-#endif
 } ExeInfo;
 
 static ExeInfo get_exe_info(const KernelArguments* args) {
@@ -536,7 +523,6 @@ static ExeInfo get_exe_info(const KernelArguments* args) {
   }
   debug("load_bias     = 0x%lx", (unsigned long)result.load_bias);
 
-#if INSERT_PT_INTERP_INTO_PHDR_TABLE
   for (size_t i = 0; i < result.phdr_count; ++i) {
     ElfW(Phdr)* phdr = &result.phdr[i];
     if (phdr->p_type != PT_LOAD) continue;
@@ -549,23 +535,19 @@ static ExeInfo get_exe_info(const KernelArguments* args) {
     break;
   }
   debug("ehdr          = %p", (void*)result.ehdr);
-#endif
 
   return result;
 }
 
-#if INSERT_PT_INTERP_INTO_PHDR_TABLE
-
 // Loaders typically read the PT_INTERP of the executable, e.g. to set a pathname on the loader.
-// glibc insists on the executable having PT_INTERP, and aborts if it's missing. while musl and
-// bionic seem to tolerate its omission.
-//
-// If only for glibc's sake, make a copy of the phdr table and insert PT_INTERP into the copy.
+// glibc insists on the executable having PT_INTERP, and aborts if it's missing.  Musl passes it
+// to debuggers to find symbols for the loader, which includes all the libc symbols.
+
+// Make a copy of the phdr table and insert PT_INTERP into the copy.
 // Make the variable's const so that they will be located in the initial readable PT_LOAD segment,
 // which guarantees that their vaddrs and file offsets will be the same. (There is only a single
 // ElfW(Ehdr)::e_phoff field that loaders seem to interpret as both a vaddr and a file offset.)
 //
-// TODO: If we don't need this for musl or bionic, then it can be removed.
 // TODO: If it's kept, then maybe we can remove the read-only/mprotect stuff if file offsets don't
 // matter (e.g. maybe ElfW(Ehdr)::e_phoff is ignored, and maybe ElfW(Phdr)::p_offset is effectively
 // a virtual address offset to the ELF header instead).
@@ -650,8 +632,6 @@ static void insert_pt_interp_into_phdr_table(const KernelArguments* args, const 
     }
   }
 }
-
-#endif // INSERT_PT_INTERP_INTO_PHDR_TABLE
 
 static const char* read_relinterp_note(const ExeInfo* exe) {
   for (size_t i = 0; i < exe->phdr_count; ++i) {
@@ -777,9 +757,7 @@ static EntryFunc* ri_main(void* raw_args) {
 
   // Create a virtual phdr table that includes PT_INTERP, for the benefit of loaders that read the
   // executable PT_INTERP.
-#if INSERT_PT_INTERP_INTO_PHDR_TABLE
   insert_pt_interp_into_phdr_table(&args, &exe, loader.path);
-#endif
   ri_close(loader.fd);
 
   // TODO: /proc/pid/auxv isn't updated with the new auxv vector. Is it possible to update it?
