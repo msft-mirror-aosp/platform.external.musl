@@ -448,7 +448,7 @@ cc_object {
 
 cc_object {
     name: "libc_musl_crtbegin_dynamic",
-    defaults: ["libc_musl_defaults"],
+    defaults: ["libc_musl_crt_defaults"],
     visibility: ["//visibility:public"],
     objs: [
         "libc_musl_crt1",
@@ -460,17 +460,11 @@ cc_object {
         "android/ldso_trampoline.cpp",
         "android/ldso_trampoline_debugger.c",
     ],
-    cflags: [
-        // These are required to make sure the C code in ldso_trampoline.c
-        // doesn't have any dependencies on libc.
-        "-fno-stack-protector",
-        "-ftrivial-auto-var-init=uninitialized",
-    ],
 }
 
 cc_object {
     name: "libc_musl_crtbegin_static",
-    defaults: ["libc_musl_defaults"],
+    defaults: ["libc_musl_crt_defaults"],
     visibility: ["//visibility:public"],
     objs: [
         "libc_musl_Scrt1",
@@ -481,7 +475,7 @@ cc_object {
 
 cc_object {
     name: "libc_musl_crtend",
-    defaults: ["libc_musl_defaults"],
+    defaults: ["libc_musl_crt_defaults"],
     visibility: ["//visibility:public"],
     objs: [
         "clang_rt.crtend",
@@ -491,7 +485,7 @@ cc_object {
 
 cc_object {
     name: "libc_musl_crtbegin_so",
-    defaults: ["libc_musl_defaults"],
+    defaults: ["libc_musl_crt_defaults"],
     visibility: ["//visibility:public"],
     objs: [
         "libc_musl_crti",
@@ -501,7 +495,7 @@ cc_object {
 
 cc_object {
     name: "libc_musl_crtend_so",
-    defaults: ["libc_musl_defaults"],
+    defaults: ["libc_musl_crt_defaults"],
     visibility: ["//visibility:public"],
     objs: [
         "clang_rt.crtend",
@@ -617,16 +611,10 @@ cc_library_static {
 // crt.
 cc_object {
     name: "libc_musl_linker_object",
-    defaults: ["libc_musl_defaults"],
+    defaults: ["libc_musl_crt_defaults"],
     srcs: [
         ":musl_linker_asm",
         "android/ldso_trampoline.cpp",
-    ],
-    cflags: [
-        // These are required to make sure the C code in ldso_trampoline.c
-        // doesn't have any dependencies on libc.
-        "-fno-stack-protector",
-        "-ftrivial-auto-var-init=uninitialized",
     ],
 }
 
