@@ -399,6 +399,9 @@ cc_defaults {
         "-fno-stack-protector",
         "-ftrivial-auto-var-init=uninitialized",
     ],
+    ldflags: [
+        "-Wl,--no-gc-sections",
+    ],
 }
 
 cc_object {
