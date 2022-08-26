@@ -89,8 +89,7 @@ cc_defaults {
         "-Wa,--noexecstack",
 
         // CFLAGS_AUTO
-        //"-Os",
-        "-O0",
+        "-Os",
         "-pipe",
         "-fomit-frame-pointer",
         "-fno-unwind-tables",
@@ -340,39 +339,14 @@ cc_library_shared {
     ],
 }
 
-// Convert the linker (which is actually libc_musl.so) into a .s file for embedding in crtbegin.
-cc_genrule {
-    name: "musl_linker_asm",
-    host_supported: true,
-    device_supported: false,
-    tools: ["extract_linker"],
-    cmd: "$(location) -s $(out) $(in)",
-    srcs: [":libc_musl"],
-    out: ["linker.s"],
-    target: {
-        darwin: {
-            enabled: false,
-        },
-        bionic: {
-            enabled: false,
-        },
-        glibc: {
-            enabled: false,
-        },
-    },
-}
-
-// Convert the linker (which is actually libc_musl.so) into a linker script for embedding in
-// crtbegin.
 cc_genrule {
     name: "musl_linker_script",
     visibility: ["//visibility:public"],
     host_supported: true,
     device_supported: false,
-    tools: ["extract_linker"],
-    cmd: "$(location) -T $(out) $(in)",
-    srcs: [":libc_musl"],
-    out: ["linker.script"],
+    srcs: ["android/relinterp.script"],
+    out: ["relinterp.script"],
+    cmd: "cp $(in) $(out)",
     target: {
         darwin: {
             enabled: false,
@@ -398,6 +372,9 @@ cc_defaults {
         // doesn't have any dependencies on libc.
         "-fno-stack-protector",
         "-ftrivial-auto-var-init=uninitialized",
+    ],
+    ldflags: [
+        "-Wl,--no-gc-sections",
     ],
 }
 
@@ -448,7 +425,7 @@ cc_object {
 
 cc_object {
     name: "libc_musl_crtbegin_dynamic",
-    defaults: ["libc_musl_defaults"],
+    defaults: ["libc_musl_crt_defaults"],
     visibility: ["//visibility:public"],
     objs: [
         "libc_musl_crt1",
@@ -456,21 +433,15 @@ cc_object {
         "clang_rt.crtbegin",
     ],
     srcs: [
-        ":musl_linker_asm",
-        "android/ldso_trampoline.cpp",
+        "android/relinterp.c",
         "android/ldso_trampoline_debugger.c",
     ],
-    cflags: [
-        // These are required to make sure the C code in ldso_trampoline.c
-        // doesn't have any dependencies on libc.
-        "-fno-stack-protector",
-        "-ftrivial-auto-var-init=uninitialized",
-    ],
+    cflags: ["-DLOADER_PATH=\"libc_musl.so\""],
 }
 
 cc_object {
     name: "libc_musl_crtbegin_static",
-    defaults: ["libc_musl_defaults"],
+    defaults: ["libc_musl_crt_defaults"],
     visibility: ["//visibility:public"],
     objs: [
         "libc_musl_Scrt1",
@@ -481,7 +452,7 @@ cc_object {
 
 cc_object {
     name: "libc_musl_crtend",
-    defaults: ["libc_musl_defaults"],
+    defaults: ["libc_musl_crt_defaults"],
     visibility: ["//visibility:public"],
     objs: [
         "clang_rt.crtend",
@@ -491,7 +462,7 @@ cc_object {
 
 cc_object {
     name: "libc_musl_crtbegin_so",
-    defaults: ["libc_musl_defaults"],
+    defaults: ["libc_musl_crt_defaults"],
     visibility: ["//visibility:public"],
     objs: [
         "libc_musl_crti",
@@ -501,7 +472,7 @@ cc_object {
 
 cc_object {
     name: "libc_musl_crtend_so",
-    defaults: ["libc_musl_defaults"],
+    defaults: ["libc_musl_crt_defaults"],
     visibility: ["//visibility:public"],
     objs: [
         "clang_rt.crtend",
@@ -617,17 +588,12 @@ cc_library_static {
 // crt.
 cc_object {
     name: "libc_musl_linker_object",
-    defaults: ["libc_musl_defaults"],
+    defaults: ["libc_musl_crt_defaults"],
     srcs: [
-        ":musl_linker_asm",
-        "android/ldso_trampoline.cpp",
+        "android/relinterp.c",
+        "android/ldso_trampoline_debugger.c",
     ],
-    cflags: [
-        // These are required to make sure the C code in ldso_trampoline.c
-        // doesn't have any dependencies on libc.
-        "-fno-stack-protector",
-        "-ftrivial-auto-var-init=uninitialized",
-    ],
+    cflags: ["-DLOADER_PATH=\"libc_musl.so\""],
 }
 
 // The architecture-specific bits have to be handled separately because the label varies based
@@ -728,7 +694,7 @@ cc_genrule {
 
         // Embedded linker objects and linker scripts
         ":libc_musl_linker_object",
-        ":musl_linker_script",
+        "android/relinterp.script",
 
         // Wrapper scripts
         ":libc_musl_clang_wrapper",
@@ -747,7 +713,7 @@ cc_genrule {
         "bits=($(locations arch/generic/bits/*.h)) && " +
         "android_bits=($(locations android/include/bits/*.h)) && " +
         "ln -s libc_musl.so $(genDir)/ld-musl.so.1 && " +
-        "echo -e 'GROUP ( Scrt1-real.o libc_musl_linker_object.o )\nINCLUDE linker.script' > $(genDir)/Scrt1.ld && " +
+        "echo -e 'GROUP ( Scrt1-real.o libc_musl_linker_object.o )\nINCLUDE relinterp.script' > $(genDir)/Scrt1.ld && " +
         "echo -e 'GROUP ( libc_musl.so )' > $(genDir)/libc.so && " +
         "$(location soong_zip) -o $(genDir)/sysroot.zip " +
         " -j " +
@@ -771,7 +737,7 @@ cc_genrule {
         "  -f $(location :libc_musl_crt1) " +
         "  -f $(location :libc_musl_rcrt1) " +
         // embedded linker crt objects
-        "  -f $(location :musl_linker_script) " +
+        "  -f $(location android/relinterp.script) " +
         "  -f $(location :libc_musl_linker_object) " +
         // libs
         "  -f $(location :libc_musl) " +
