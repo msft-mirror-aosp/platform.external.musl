@@ -52,6 +52,9 @@ typedef void EntryFunc(void);
 
 #define PAGE_START(x) ((x) & (~(PAGE_SIZE-1)))
 #define PAGE_END(x) PAGE_START((x) + (PAGE_SIZE - 1))
+#define NT_TYPE_RELINTERP 5
+#define ROUND_UP(x, y) (((x) + (y) - 1) / (y) * (y))
+#define NOTE_SECTION_NAME ".note.google.relinterp"
 
 #define START "_start"
 #include "crt_arch.h"
@@ -638,6 +641,32 @@ static void insert_pt_interp_into_phdr_table(const KernelArguments* args, const 
   // to the read-only first page.
 }
 
+static const char* read_relinterp_note(const ExeInfo* exe) {
+  for (size_t i = 0; i < exe->phdr_count; ++i) {
+    ElfW(Phdr)* const phdr = &exe->phdr[i];
+    if (phdr->p_type == PT_NOTE) {
+      char* note_c = (char*)(phdr->p_vaddr + exe->load_bias);
+      char* const end = note_c + phdr->p_memsz;
+      while (note_c < end && end - note_c >= sizeof(ElfW(Nhdr))) {
+        ElfW(Nhdr)* const note = (ElfW(Nhdr)*)note_c;
+        const size_t total_note_size = sizeof(ElfW(Nhdr)) +
+          ROUND_UP(note->n_namesz, 4) +
+          ROUND_UP(note->n_descsz, 4);
+        if (end - note_c < total_note_size) break;
+        if (note->n_namesz == sizeof("Google") &&
+            !ri_strcmp((char*)(note + 1), "Google") &&
+            note->n_type == NT_TYPE_RELINTERP) {
+          char* result = (char*)(note + 1) + ROUND_UP(note->n_namesz, 4);
+          debug("%s path is '%s'", NOTE_SECTION_NAME, result);
+          return result;
+        }
+        note_c += total_note_size;
+      }
+    }
+  }
+  fatal("error: could not find " NOTE_SECTION_NAME " note");
+}
+
 static void realpath_fd(int fd, const char* orig_path, char* out, size_t len) {
   char path[64];
   ri_strcpy(path, "/proc/self/fd/");
@@ -756,7 +785,7 @@ static int search_path_list_for_loader(const char* loader_rel_path, const char* 
 }
 
 static int find_and_open_loader(const ExeInfo* exe, const char* ld_library_path, OpenedLoader* loader) {
-  const char* loader_rel_path = LOADER_PATH;
+  const char* loader_rel_path = read_relinterp_note(exe);
 
   if (loader_rel_path[0] == '/') {
     return open_loader(loader_rel_path, loader);
@@ -891,3 +920,20 @@ void _start_c(long* raw_args) {
 // DWARF language type DW_LANG_C.
 extern void _dl_debug_state() {
 }
+
+__asm__ (
+"  .section " NOTE_SECTION_NAME ",\"a\",%note\n"
+"  .balign 4\n"
+"  .type relinterp, %object\n"
+"relinterp:\n"
+"  .long (2f-1f)\n"             // int32_t namesz
+"  .long 256\n"                 // int32_t descsz
+"  .long 5\n"                   // int32_t type (NT_TYPE_RELINTERP)
+"1:.ascii \"Google\\0\"\n" // char name[]
+"2:.balign 4\n"
+"3:.ascii \"" LOADER_PATH "\\0\"\n"
+"  .balign 4\n"
+"4:.space 256-(4b-3b)\n"
+"  .size relinterp, .-relinterp\n"
+"  .text\n"
+);
