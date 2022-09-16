@@ -63,8 +63,14 @@ static void __ri__start_c(void* raw_args) __attribute__((used));
 
 #include "crt_arch.h"
 
-static ElfW(Phdr) replacement_phdr_table[64];
-static char replacement_interp[PATH_MAX];
+// With lld, these variables should be output into .rodata and placed into the first PT_LOAD
+// segment.
+static const ElfW(Phdr) kVirtualTable[64];
+static const char kVirtualInterp[PATH_MAX];
+
+// Ensure that this file's executable code is in a different page from the virtual table above, if
+// the executable uses an initial read-exec PT_LOAD.
+__asm__ (".space 4096");
 
 static bool g_debug = false;
 static const char* g_prog_name = NULL;
@@ -558,31 +564,58 @@ static ExeInfo get_exe_info(const KernelArguments* args) {
 // Loaders typically read the PT_INTERP of the executable, e.g. to set a pathname on the loader.
 // glibc insists on the executable having PT_INTERP, and aborts if it's missing.  Musl passes it
 // to debuggers to find symbols for the loader, which includes all the libc symbols.
-//
+
 // Make a copy of the phdr table and insert PT_INTERP into the copy.
+// Make the variable's const so that they will be located in the initial readable PT_LOAD segment,
+// which guarantees that their vaddrs and file offsets will be the same. (There is only a single
+// ElfW(Ehdr)::e_phoff field that loaders seem to interpret as both a vaddr and a file offset.)
 //
+// TODO: If it's kept, then maybe we can remove the read-only/mprotect stuff if file offsets don't
+// matter (e.g. maybe ElfW(Ehdr)::e_phoff is ignored, and maybe ElfW(Phdr)::p_offset is effectively
+// a virtual address offset to the ELF header instead).
+
 static void insert_pt_interp_into_phdr_table(const KernelArguments* args, const ExeInfo* exe,
                                              const char* loader_realpath) {
+  uintptr_t remap_start = PAGE_START((uintptr_t)exe->ehdr);
+  uintptr_t remap_end = PAGE_END(MAX(
+    (uintptr_t)(&kVirtualTable + 1),
+    (uintptr_t)(&kVirtualInterp + 1)));
+
+  debug("remap_start   = 0x%lx", (unsigned long)remap_start);
+  debug("remap_end     = 0x%lx", (unsigned long)remap_end);
+
+  uintptr_t first_load_start = exe->load_bias + exe->first_load->p_vaddr;
+  uintptr_t first_load_end = first_load_start + exe->first_load->p_memsz;
+  first_load_start = PAGE_START(first_load_start);
+  first_load_end = PAGE_END(first_load_end);
+  if (remap_start < first_load_start || remap_end > first_load_end) {
+    fatal("virtual phdr table not contained within first PT_LOAD segment (0x%zx, 0x%zx)",
+          (size_t)first_load_start, (size_t)first_load_end);
+  }
+
+  if (ri_mprotect((void*)remap_start,
+                  remap_end - remap_start,
+                  PROT_READ | PROT_WRITE) != 0) {
+    fatal("could not make executable's ELF header writable: %s", ri_strerror(g_errno));
+  }
+
   // Reserve extra space for the inserted PT_PHDR and PT_INTERP segments and a null terminator.
-  if (exe->phdr_count + 3 > sizeof(replacement_phdr_table) / sizeof(replacement_phdr_table[0])) {
+  if (exe->phdr_count + 3 > sizeof(kVirtualTable) / sizeof(kVirtualTable[0])) {
     fatal("too many phdr table entries in executable");
   }
 
   ElfW(Phdr) newPhdr = {
     .p_type = PT_PHDR,
-    // The replacement phdr is in the BSS section, which has no file location.
-    // Use 0 for the offset.  If this causes a problem the replacement phdr could
-    // be moved to the data section and the correct p_offset calculated.
-    .p_offset = 0,
-    .p_vaddr = (uintptr_t)&replacement_phdr_table - exe->load_bias,
-    .p_paddr = (uintptr_t)&replacement_phdr_table - exe->load_bias,
+    .p_offset = (uintptr_t)&kVirtualTable - (uintptr_t)exe->ehdr,
+    .p_vaddr = (uintptr_t)&kVirtualTable - exe->load_bias,
+    .p_paddr = (uintptr_t)&kVirtualTable - exe->load_bias,
     .p_memsz = (exe->phdr_count + 1) * sizeof(ElfW(Phdr)),
     .p_filesz = (exe->phdr_count + 1) * sizeof(ElfW(Phdr)),
     .p_flags = PF_R,
     .p_align = alignof(ElfW(Phdr)),
   };
 
-  ElfW(Phdr*) cur = replacement_phdr_table;
+  ElfW(Phdr*) cur = (ElfW(Phdr)*)optimizer_barrier((void*)kVirtualTable);
   if (exe->phdr[0].p_type != PT_PHDR) {
     // ld.bfd does not insert a PT_PHDR if there is no PT_INTERP, fake one.
     // It has to be first.  We're adding an entry so increase memsz and filesz.
@@ -608,35 +641,39 @@ static void insert_pt_interp_into_phdr_table(const KernelArguments* args, const 
 
   // Insert PT_INTERP at the end.
   cur->p_type = PT_INTERP;
-  cur->p_offset = 0;
-  cur->p_vaddr = (uintptr_t)&replacement_interp - exe->load_bias;
+  cur->p_offset = (uintptr_t)&kVirtualInterp - (uintptr_t)exe->ehdr;
+  cur->p_vaddr = (uintptr_t)&kVirtualInterp - exe->load_bias;
   cur->p_paddr = cur->p_vaddr;
-  cur->p_filesz = ri_strlen(replacement_interp) + 1;
-  cur->p_memsz = ri_strlen(replacement_interp) + 1;
+  cur->p_filesz = ri_strlen(kVirtualInterp) + 1;
+  cur->p_memsz = ri_strlen(kVirtualInterp) + 1;
   cur->p_flags = PF_R;
   cur->p_align = 1;
   ++cur;
 
-  ri_strcpy(replacement_interp, loader_realpath);
+  ri_strcpy((char*)optimizer_barrier((void*)kVirtualInterp), loader_realpath);
 
-  debug("new phdr      = %p", (void*)&replacement_phdr_table);
-  debug("new phnum     = %zu", cur - replacement_phdr_table);
+  // Updating these ehdr fields seems to be unnecessary in practice, because libcs instead use
+  // AT_PHDR and AT_PHNUM to find the phdr table. This is easy to do, though.
+  exe->ehdr->e_phoff = (uintptr_t)&kVirtualTable - (uintptr_t)exe->ehdr;
+  exe->ehdr->e_phnum = exe->phdr_count + 1;
+  debug("new phdr      = %p", (void*)&kVirtualTable);
+  debug("new phnum     = %zu", (exe->phdr_count + 1));
+
+  if (ri_mprotect(
+        (void*)remap_start,
+        remap_end - remap_start,
+        elf_flags_to_prot(exe->first_load->p_flags)) != 0) {
+    fatal("could not make executable's ELF header read-only again: %s", ri_strerror(g_errno));
+  }
 
   // Update the aux vector with the new phdr+phnum.
   for (size_t i = 0; i < args->auxv_count; ++i) {
     if (args->auxv[i].key == AT_PHDR) {
-      args->auxv[i].value = (unsigned long)&replacement_phdr_table;
+      args->auxv[i].value = (unsigned long)&kVirtualTable;
     } else if (args->auxv[i].key == AT_PHNUM) {
-      args->auxv[i].value = cur - replacement_phdr_table;
+      args->auxv[i].value = exe->phdr_count + 1;
     }
   }
-
-  // AT_PHDR and AT_PHNUM are now updated to point to the replacement program
-  // headers, but the e_phoff and e_phnum in the ELF headers still point to the
-  // original program headers.  dynlink.c doesn't use e_phoff value from the
-  // main application's program headers.  The e_phoff and e_phnum values could
-  // be updated, but that would require using mprotect to allow modifications
-  // to the read-only first page.
 }
 
 static const char* read_relinterp_note(const ExeInfo* exe) {
