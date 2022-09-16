@@ -1,4 +1,4 @@
 SECTIONS {
   /DISCARD/ : { *(.interp) }
 }
-INSERT BEFORE .note.google.relinterp;
+INSERT BEFORE .text;
