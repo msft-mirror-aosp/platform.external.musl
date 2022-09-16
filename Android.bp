@@ -339,6 +339,27 @@ cc_library_shared {
     ],
 }
 
+cc_genrule {
+    name: "musl_linker_script",
+    visibility: ["//visibility:public"],
+    host_supported: true,
+    device_supported: false,
+    srcs: ["android/relinterp.script"],
+    out: ["relinterp.script"],
+    cmd: "cp $(in) $(out)",
+    target: {
+        darwin: {
+            enabled: false,
+        },
+        bionic: {
+            enabled: false,
+        },
+        glibc: {
+            enabled: false,
+        },
+    },
+}
+
 //
 // The musl CRT objects
 //
@@ -407,6 +428,7 @@ cc_object {
     defaults: ["libc_musl_crt_defaults"],
     visibility: ["//visibility:public"],
     objs: [
+        "libc_musl_crt1",
         "libc_musl_crti",
         "clang_rt.crtbegin",
     ],
@@ -691,7 +713,7 @@ cc_genrule {
         "bits=($(locations arch/generic/bits/*.h)) && " +
         "android_bits=($(locations android/include/bits/*.h)) && " +
         "ln -s libc_musl.so $(genDir)/ld-musl.so.1 && " +
-        "echo -e 'GROUP ( libc_musl_linker_object.o )\nINCLUDE relinterp.script' > $(genDir)/Scrt1.ld && " +
+        "echo -e 'GROUP ( Scrt1-real.o libc_musl_linker_object.o )\nINCLUDE relinterp.script' > $(genDir)/Scrt1.ld && " +
         "echo -e 'GROUP ( libc_musl.so )' > $(genDir)/libc.so && " +
         "$(location soong_zip) -o $(genDir)/sysroot.zip " +
         " -j " +
@@ -708,8 +730,13 @@ cc_genrule {
         "  -D $$(dirname $${android_bits[0]}) " +
         " -P include/sys -j " +
         "  -f $(location android/include/sys/cdefs.h) " +
-        // embedded linker crt objects
+        // crt objects
         " -P lib -j " +
+        "  -f $(location :libc_musl_crti) " +
+        "  -f $(location :libc_musl_crtn) " +
+        "  -f $(location :libc_musl_crt1) " +
+        "  -f $(location :libc_musl_rcrt1) " +
+        // embedded linker crt objects
         "  -f $(location android/relinterp.script) " +
         "  -f $(location :libc_musl_linker_object) " +
         // libs
@@ -729,10 +756,6 @@ cc_genrule {
         "  -f $(location :libc_musl_static) " +
         "  -f $(location :libc_musl_sysroot_static_empty) " +
         "  -f $(genDir)/Scrt1.ld " +
-        "  -f $(location :libc_musl_crti) " +
-        "  -f $(location :libc_musl_crtn) " +
-        "  -f $(location :libc_musl_crt1) " +
-        "  -f $(location :libc_musl_rcrt1) " +
         "  -f $(location :libc_musl_Scrt1) " +
         "  -f $(location :libc++_static) " +
         "  -f $(location :clang_rt.crtbegin) " +
@@ -761,11 +784,6 @@ cc_genrule {
         " lib/clang_rt.crtbegin.o:lib/crtbeginT.o " +
         " lib/clang_rt.crtend.o:lib/crtend.o " +
         " lib/clang_rt.crtend.o:lib/crtendS.o " +
-        // rename crt objects
-        " lib/libc_musl_crti.o:lib/crti.o " +
-        " lib/libc_musl_crtn.o:lib/crtn.o " +
-        " lib/libc_musl_crt1.o:lib/crt1.o " +
-        " lib/libc_musl_rcrt1.o:lib/rcrt1.o " +
         // rename static libz
         " lib/libz_static_for_sysroot.a:lib/libz.a " +
         " && " +

@@ -1,3 +1,4 @@
+ENTRY(__ri__start)
 SECTIONS {
   /DISCARD/ : { *(.interp) }
 }
