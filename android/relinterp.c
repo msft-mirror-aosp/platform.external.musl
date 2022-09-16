@@ -30,7 +30,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <link.h>
-#include <stdalign.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -599,42 +598,21 @@ static void insert_pt_interp_into_phdr_table(const KernelArguments* args, const 
     fatal("could not make executable's ELF header writable: %s", ri_strerror(g_errno));
   }
 
-  // Reserve extra space for the inserted PT_PHDR and PT_INTERP segments and a null terminator.
-  if (exe->phdr_count + 3 > sizeof(kVirtualTable) / sizeof(kVirtualTable[0])) {
+  // Reserve extra space for the inserted PT_INTERP segment and a null terminator.
+  if (exe->phdr_count + 2 > sizeof(kVirtualTable) / sizeof(kVirtualTable[0])) {
     fatal("too many phdr table entries in executable");
   }
 
-  ElfW(Phdr) newPhdr = {
-    .p_type = PT_PHDR,
-    .p_offset = (uintptr_t)&kVirtualTable - (uintptr_t)exe->ehdr,
-    .p_vaddr = (uintptr_t)&kVirtualTable - exe->load_bias,
-    .p_paddr = (uintptr_t)&kVirtualTable - exe->load_bias,
-    .p_memsz = (exe->phdr_count + 1) * sizeof(ElfW(Phdr)),
-    .p_filesz = (exe->phdr_count + 1) * sizeof(ElfW(Phdr)),
-    .p_flags = PF_R,
-    .p_align = alignof(ElfW(Phdr)),
-  };
-
   ElfW(Phdr*) cur = (ElfW(Phdr)*)optimizer_barrier((void*)kVirtualTable);
-  if (exe->phdr[0].p_type != PT_PHDR) {
-    // ld.bfd does not insert a PT_PHDR if there is no PT_INTERP, fake one.
-    // It has to be first.  We're adding an entry so increase memsz and filesz.
-    newPhdr.p_memsz += sizeof(ElfW(Phdr));
-    newPhdr.p_filesz += sizeof(ElfW(Phdr));
-    *cur = newPhdr;
-    ++cur;
-  }
-
   for (size_t i = 0; i < exe->phdr_count; ++i) {
-    switch (exe->phdr[i].p_type) {
-    case 0:
-      fatal("unexpected null phdr entry at index %zu", i);
-      break;
-    case PT_PHDR:
-      *cur = newPhdr;
-      break;
-    default:
-      *cur = exe->phdr[i];
+    *cur = exe->phdr[i];
+    if (cur->p_type == 0) fatal("unexpected null phdr entry at index %zu", i);
+    if (cur->p_type == PT_PHDR) {
+      cur->p_offset = (uintptr_t)&kVirtualTable - (uintptr_t)exe->ehdr;
+      cur->p_vaddr = (uintptr_t)&kVirtualTable - exe->load_bias;
+      cur->p_paddr = cur->p_vaddr;
+      cur->p_memsz = (exe->phdr_count + 1) * sizeof(ElfW(Phdr));
+      cur->p_filesz = cur->p_memsz;
     }
     ++cur;
   }
