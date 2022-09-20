@@ -907,6 +907,20 @@ void _start_c(long* raw_args) {
   fatal("AT_BASE not found in aux vector");
 }
 
+
+// Normally gdb and lldb look for a symbol named "_dl_debug_state" in the
+// interpreter to get notified when the dynamic loader has modified the
+// list of shared libraries.  When using relinterp, the debugger is not
+// aware of the interpreter (PT_INTERP is unset and auxv AT_BASE is 0) so it
+// doesn't know where to look for the symbol.  It falls back to looking in the
+// executable, so provide a symbol for it to find.  The dynamic loader will
+// need to forward its calls to its own _dl_debug_state symbol to this one.
+//
+// This has to be defined in a .c file because lldb looks for a symbol with
+// DWARF language type DW_LANG_C.
+extern void _dl_debug_state() {
+}
+
 __asm__ (
 "  .section " NOTE_SECTION_NAME ",\"a\",%note\n"
 "  .balign 4\n"
