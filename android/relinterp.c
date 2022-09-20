@@ -45,9 +45,6 @@
 
 typedef void EntryFunc(void);
 
-void _start(void);
-static void __ri__start_c(void* raw_args) __attribute__((used));
-
 // arm64 doesn't have a constant page size and has to use the value from AT_PAGESZ.
 #ifndef PAGE_SIZE
 #define PAGE_SIZE g_page_size
@@ -59,9 +56,14 @@ static void __ri__start_c(void* raw_args) __attribute__((used));
 #define ROUND_UP(x, y) (((x) + (y) - 1) / (y) * (y))
 #define NOTE_SECTION_NAME ".note.google.relinterp"
 
-#define START "__ri__start"
-
+#define START "_start"
 #include "crt_arch.h"
+
+int main();
+weak void _init();
+weak void _fini();
+int __libc_start_main(int (*)(), int, char **,
+  void (*)(), void(*)(), void(*)());
 
 static ElfW(Phdr) replacement_phdr_table[64];
 static char replacement_interp[PATH_MAX];
@@ -831,7 +833,7 @@ static bool is_exe_relocated(void) {
   return read_environ != NULL;
 }
 
-static void __ri__start_c(void* raw_args) {
+void _start_c(long* raw_args) {
   const KernelArguments args = read_args(raw_args);
   const char* ld_library_path = NULL;
 
@@ -848,11 +850,13 @@ static void __ri__start_c(void* raw_args) {
   }
 
   if (is_exe_relocated()) {
-    debug("ri_main: exe is already relocated, jumping to _start");
-    CRTJMP(_start, raw_args);
+    debug("exe is already relocated, starting main executable");
+    int argc = raw_args[0];
+    char **argv = (void *)(raw_args+1);
+    __libc_start_main(main, argc, argv, _init, _fini, 0);
   }
 
-  debug("entering ri_main");
+  debug("entering relinterp");
 
   const ExeInfo exe = get_exe_info(&args);
   g_page_size = exe.page_size;
