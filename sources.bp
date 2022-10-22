@@ -1118,7 +1118,6 @@ cc_defaults {
         "src/thread/pthread_setschedprio.c",
         "src/thread/pthread_setspecific.c",
         "src/thread/pthread_sigmask.c",
-        "src/thread/pthread_sigqueue.c",
         "src/thread/pthread_spin_destroy.c",
         "src/thread/pthread_spin_init.c",
         "src/thread/pthread_spin_lock.c",
