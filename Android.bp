@@ -504,7 +504,7 @@ cc_genrule {
         },
     },
     tool_files: ["tools/mkalltypes.sed"],
-    out: ["bits/alltypes.h"],
+    out: ["bits/arch/alltypes.h"],
     cmd: "sed -f $(location tools/mkalltypes.sed) $(in) > $(out)",
 }
 
