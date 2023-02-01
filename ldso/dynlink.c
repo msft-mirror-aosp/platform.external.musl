@@ -32,7 +32,9 @@
 #define realloc __libc_realloc
 #define free __libc_free
 
-static void error(const char *, ...);
+static void error_impl(const char *, ...);
+static void error_noop(const char *, ...);
+static void (*error)(const char *, ...) = error_noop;
 
 #define MAXP2(a,b) (-(-(a)&-(b)))
 #define ALIGN(x,y) ((x)+(y)-1 & -(y))
@@ -151,6 +153,7 @@ static struct fdpic_loadmap *app_loadmap;
 static struct fdpic_dummy_loadmap app_dummy_loadmap;
 
 struct debug *_dl_debug_addr = &debug;
+static void (*exe_dl_debug_state)(void) = 0;
 
 extern hidden int __malloc_replaced;
 
@@ -211,7 +214,8 @@ static void decode_vec(size_t *v, size_t *a, size_t cnt)
 	size_t i;
 	for (i=0; i<cnt; i++) a[i] = 0;
 	for (; v[0]; v+=2) if (v[0]-1<cnt-1) {
-		a[0] |= 1UL<<v[0];
+		if (v[0] < 8*sizeof(long))
+			a[0] |= 1UL<<v[0];
 		a[v[0]] = v[1];
 	}
 }
@@ -514,6 +518,23 @@ static void do_relocs(struct dso *dso, size_t *rel, size_t rel_size, size_t stri
 			continue;
 		}
 	}
+}
+
+static void do_relr_relocs(struct dso *dso, size_t *relr, size_t relr_size)
+{
+	unsigned char *base = dso->base;
+	size_t *reloc_addr;
+	for (; relr_size; relr++, relr_size-=sizeof(size_t))
+		if ((relr[0]&1) == 0) {
+			reloc_addr = laddr(dso, relr[0]);
+			*reloc_addr++ += (size_t)base;
+		} else {
+			int i = 0;
+			for (size_t bitmap=relr[0]; (bitmap>>=1); i++)
+				if (bitmap&1)
+					reloc_addr[i] += (size_t)base;
+			reloc_addr += 8*sizeof(size_t)-1;
+		}
 }
 
 static void redo_lazy_relocs()
@@ -869,7 +890,7 @@ static int fixup_rpath(struct dso *p, char *buf, size_t buf_size)
 		case ENOENT:
 		case ENOTDIR:
 		case EACCES:
-			break;
+			return 0;
 		default:
 			return -1;
 		}
@@ -1011,7 +1032,7 @@ static struct dso *load_library(const char *name, struct dso *needed_by)
 	/* Catch and block attempts to reload the implementation itself */
 	if (name[0]=='l' && name[1]=='i' && name[2]=='b') {
 		static const char reserved[] =
-			"c.pthread.rt.m.dl.util.xnet.";
+			"c.c_musl.pthread.rt.m.dl.util.xnet.";
 		const char *rp, *next;
 		for (rp=reserved; *rp; rp=next) {
 			next = strchr(rp, '.') + 1;
@@ -1358,13 +1379,17 @@ static void reloc_all(struct dso *p)
 			2+(dyn[DT_PLTREL]==DT_RELA));
 		do_relocs(p, laddr(p, dyn[DT_REL]), dyn[DT_RELSZ], 2);
 		do_relocs(p, laddr(p, dyn[DT_RELA]), dyn[DT_RELASZ], 3);
+		if (!DL_FDPIC)
+			do_relr_relocs(p, laddr(p, dyn[DT_RELR]), dyn[DT_RELRSZ]);
 
-		if (head != &ldso && p->relro_start != p->relro_end &&
-		    mprotect(laddr(p, p->relro_start), p->relro_end-p->relro_start, PROT_READ)
-		    && errno != ENOSYS) {
-			error("Error relocating %s: RELRO protection failed: %m",
-				p->name);
-			if (runtime) longjmp(*rtld_fail, 1);
+		if (head != &ldso && p->relro_start != p->relro_end) {
+			long ret = __syscall(SYS_mprotect, laddr(p, p->relro_start),
+				p->relro_end-p->relro_start, PROT_READ);
+			if (ret != 0 && ret != -ENOSYS) {
+				error("Error relocating %s: RELRO protection failed: %m",
+					p->name);
+				if (runtime) longjmp(*rtld_fail, 1);
+			}
 		}
 
 		p->relocated = 1;
@@ -1561,6 +1586,8 @@ void __libc_start_init(void)
 
 static void dl_debug_state(void)
 {
+	if (exe_dl_debug_state)
+		exe_dl_debug_state();
 }
 
 weak_alias(dl_debug_state, _dl_debug_state);
@@ -1758,6 +1785,9 @@ void __dls3(size_t *sp, size_t *auxv)
 		env_path = getenv("LD_LIBRARY_PATH");
 		env_preload = getenv("LD_PRELOAD");
 	}
+
+	/* Activate error handler function */
+	error = error_impl;
 
 	/* If the main program was already loaded by the kernel,
 	 * AT_PHDR will point to some location other than the dynamic
@@ -1982,6 +2012,12 @@ void __dls3(size_t *sp, size_t *auxv)
 		__malloc_replaced = 1;
 	if (find_sym(head, "aligned_alloc", 1).dso != &ldso)
 		__aligned_alloc_replaced = 1;
+
+	/* Determine if another DSO is providing the _dl_debug_state symbol
+	 * and forward calls to it. */
+	struct symdef debug_sym = find_sym(head, "_dl_debug_state", 1);
+	if (debug_sym.dso != &ldso)
+		exe_dl_debug_state = (void (*)(void))laddr(debug_sym.dso, debug_sym.sym->st_value);
 
 	/* Switch to runtime mode: any further failures in the dynamic
 	 * linker are a reportable failure rather than a fatal startup
@@ -2348,7 +2384,7 @@ int dl_iterate_phdr(int(*callback)(struct dl_phdr_info *info, size_t size, void 
 	return ret;
 }
 
-static void error(const char *fmt, ...)
+static void error_impl(const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
@@ -2361,4 +2397,8 @@ static void error(const char *fmt, ...)
 	}
 	__dl_vseterr(fmt, ap);
 	va_end(ap);
+}
+
+static void error_noop(const char *fmt, ...)
+{
 }
