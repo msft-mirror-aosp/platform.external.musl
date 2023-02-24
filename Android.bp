@@ -78,7 +78,7 @@ cc_library_headers {
 }
 
 cc_defaults {
-    name: "libc_musl_defaults",
+    name: "libc_musl_base_defaults",
     host_supported: true,
     device_supported: false,
     system_shared_libs: [],
@@ -170,15 +170,6 @@ cc_defaults {
 
     asflags: ["-Wno-unused-command-line-argument"],
 
-    header_libs: [
-        // The order here is very important, private headers like src/include/features.h override
-        // public headers like include/features.h, and arch headers like arch/x86_64/ksigaction.h
-        // override private headers like src/internal/ksigaction.h.
-        "libc_musl_arch_headers",
-        "libc_musl_private_headers",
-        "libc_musl_public_headers",
-    ],
-
     stl: "none",
     c_std: "c99",
     sanitize: {
@@ -195,6 +186,19 @@ cc_defaults {
             enabled: false,
         },
     },
+}
+
+cc_defaults {
+    name: "libc_musl_defaults",
+    defaults: ["libc_musl_base_defaults"],
+    header_libs: [
+        // The order here is very important, private headers like src/include/features.h override
+        // public headers like include/features.h, and arch headers like arch/x86_64/ksigaction.h
+        // override private headers like src/internal/ksigaction.h.
+        "libc_musl_arch_headers",
+        "libc_musl_private_headers",
+        "libc_musl_public_headers",
+    ],
 }
 
 cc_library_headers {
@@ -232,6 +236,14 @@ cc_library {
         "-nostdlib",
     ],
     dynamic_list: "dynamic.list",
+    export_header_lib_headers: [
+        "libc_musl_arch_headers",
+        "libc_musl_public_headers",
+        "libc_llndk_headers",
+    ],
+    header_libs: [
+        "libc_llndk_headers",
+    ],
 }
 
 // All the static parts of the main musl libc.  Don't use this directly, use
@@ -345,7 +357,7 @@ cc_library_shared {
 
 cc_defaults {
     name: "libc_musl_crt_defaults",
-    defaults: ["libc_musl_defaults"],
+    defaults: ["libc_musl_base_defaults"],
     cflags: [
         // These are required to make sure the C code in crt/*.c
         // doesn't have any dependencies on libc.
@@ -354,6 +366,39 @@ cc_defaults {
     ],
     ldflags: [
         "-Wl,--no-gc-sections",
+    ],
+
+    // The headers below are the same as the header_libs in
+    // libc_musl_defaults, but bazel considers the crt depending
+    // on a header lib to be a circular dependency (toolchain ->
+    // crt objects -> header lib -> toolchain).
+    // TODO(b/263407827): go back to using header_libs once bazel
+    // supports it without introducing a dependency on the toolchain.
+    arch: {
+        arm: {
+            local_include_dirs: ["arch/arm"],
+        },
+        arm64: {
+            local_include_dirs: ["arch/aarch64"],
+        },
+        x86: {
+            local_include_dirs: ["arch/i386"],
+        },
+        x86_64: {
+            local_include_dirs: ["arch/x86_64"],
+        },
+    },
+    generated_headers: [
+        "libc_musl_alltypes.h",
+        "libc_musl_syscall.h",
+        "libc_musl_version.h",
+    ],
+    local_include_dirs: [
+        "arch/generic",
+        "src/include",
+        "src/internal",
+        "android/include",
+        "include",
     ],
 }
 
@@ -504,7 +549,7 @@ cc_genrule {
         },
     },
     tool_files: ["tools/mkalltypes.sed"],
-    out: ["bits/alltypes.h"],
+    out: ["bits/arch/alltypes.h"],
     cmd: "sed -f $(location tools/mkalltypes.sed) $(in) > $(out)",
 }
 
