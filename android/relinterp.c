@@ -26,6 +26,7 @@
  * SUCH DAMAGE.
  */
 
+#define SYSCALL_NO_TLS 1
 #include <elf.h>
 #include <errno.h>
 #include <fcntl.h>
