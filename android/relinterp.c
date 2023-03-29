@@ -125,6 +125,10 @@ static int ri_mprotect(void* addr, size_t len, int prot) {
   return ri_syscall(SYS_mprotect, addr, len, prot);
 }
 
+static ssize_t ri_pread(int fd, void* buf, size_t size, off_t ofs) {
+  return ri_syscall(SYS_pread, fd, buf, size, __SYSCALL_LL_PRW(ofs));
+}
+
 static size_t ri_strlen(const char* src) {
   for (size_t len = 0;; ++len) {
     if (src[len] == '\0') return len;
@@ -647,11 +651,42 @@ static void realpath_fd(int fd, const char* orig_path, char* out, size_t len) {
   if ((size_t)result >= len) fatal("realpath of %s too long", orig_path);
 }
 
-static int open_loader(const char* path, OpenedLoader* loader) {
+static int open_loader(const ExeInfo* exe, const char* path, OpenedLoader* loader) {
   debug("trying to open '%s'", path);
   loader->fd = ri_open(path, O_RDONLY, 0);
   if (loader->fd < 0) {
     debug("could not open loader %s: %s", path, ri_strerror(g_errno));
+    return -1;
+  }
+
+  ElfW(Ehdr) hdr;
+  ssize_t l = ri_pread(loader->fd, &hdr, sizeof(hdr), 0);
+  if (l < 0) {
+    debug("reading elf header from %s failed: %s", path, ri_strerror(g_errno));
+    return -1;
+  }
+  if (l != sizeof(hdr)) {
+    debug("file %s too short to contain elf header", path);
+    return -1;
+  }
+
+  if (hdr.e_ident[0] != ELFMAG0 ||
+      hdr.e_ident[1] != ELFMAG1 ||
+      hdr.e_ident[2] != ELFMAG2 ||
+      hdr.e_ident[3] != ELFMAG3) {
+    debug("file %s is not an elf file", path);
+    return -1;
+  }
+
+  if (hdr.e_machine != exe->ehdr->e_machine) {
+    debug("incorrect elf machine for loader %s, expected %d got %d",
+          path, exe->ehdr->e_machine, hdr.e_machine);
+    return -1;
+  }
+
+  if (hdr.e_ident[EI_CLASS] != exe->ehdr->e_ident[EI_CLASS]) {
+    debug("incorrect elf class for loader %s, expected %d got %d",
+          path, exe->ehdr->e_ident[EI_CLASS], hdr.e_ident[EI_CLASS]);
     return -1;
   }
 
@@ -660,7 +695,7 @@ static int open_loader(const char* path, OpenedLoader* loader) {
   return 0;
 }
 
-static int open_rel_loader(const char* dir, const char* rel, OpenedLoader* loader) {
+static int open_rel_loader(const ExeInfo* exe, const char* dir, const char* rel, OpenedLoader* loader) {
   char buf[PATH_MAX];
 
   size_t dir_len = ri_strlen(dir);
@@ -680,7 +715,7 @@ static int open_rel_loader(const char* dir, const char* rel, OpenedLoader* loade
   }
   ri_strcat(buf, rel);
 
-  return open_loader(buf, loader);
+  return open_loader(exe, buf, loader);
 }
 
 static void get_origin(char* buf, size_t buf_len) {
@@ -693,7 +728,7 @@ static void get_origin(char* buf, size_t buf_len) {
   ri_dirname(buf);
 }
 
-static int search_path_list_for_loader(const char* loader_rel_path, const char* search_path,
+static int search_path_list_for_loader(const ExeInfo* exe, const char* loader_rel_path, const char* search_path,
                                        const char* search_path_name, bool expand_origin, OpenedLoader *loader) {
   char origin_buf[PATH_MAX];
   char* origin = NULL;
@@ -743,11 +778,12 @@ static int search_path_list_for_loader(const char* loader_rel_path, const char* 
 
       ri_strcat(buf, origin);
       ri_strcat(buf, d+s);
-      debug("trying loader %s at %s", loader_rel_path, buf);
     } else {
       ri_strcpy(buf, search_path_entry);
     }
-    if (!open_rel_loader(buf, loader_rel_path, loader)) {
+    debug("trying loader %s at %s", loader_rel_path, buf);
+    if (!open_rel_loader(exe, buf, loader_rel_path, loader)) {
+      debug("opened loader %s at %s", loader_rel_path, buf);
       return 0;
     }
   }
@@ -759,14 +795,14 @@ static int find_and_open_loader(const ExeInfo* exe, const char* ld_library_path,
   const char* loader_rel_path = LOADER_PATH;
 
   if (loader_rel_path[0] == '/') {
-    return open_loader(loader_rel_path, loader);
+    return open_loader(exe, loader_rel_path, loader);
   }
 
   if (exe->secure) {
     fatal("relinterp not supported for secure executables");
   }
 
-  if (!search_path_list_for_loader(loader_rel_path, ld_library_path, "LD_LIBRARY_PATH", false, loader)) {
+  if (!search_path_list_for_loader(exe, loader_rel_path, ld_library_path, "LD_LIBRARY_PATH", false, loader)) {
     return 0;
   }
 
@@ -774,10 +810,10 @@ static int find_and_open_loader(const ExeInfo* exe, const char* ld_library_path,
     // If no DT_RUNPATH search relative to the exe.
     char origin[PATH_MAX];
     get_origin(origin, sizeof(origin));
-    return open_rel_loader(origin, loader_rel_path, loader);
+    return open_rel_loader(exe, origin, loader_rel_path, loader);
   }
 
-  if (!search_path_list_for_loader(loader_rel_path, exe->search_paths, "rpath", true, loader)) {
+  if (!search_path_list_for_loader(exe, loader_rel_path, exe->search_paths, "rpath", true, loader)) {
     return 0;
   }
 
