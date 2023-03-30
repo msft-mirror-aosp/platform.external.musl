@@ -65,6 +65,8 @@ struct dso {
 	size_t *dynv;
 	struct dso *next, *prev;
 
+	int elfmachine;
+	int elfclass;
 	Phdr *phdr;
 	int phnum;
 	size_t phentsize;
@@ -644,6 +646,19 @@ static void unmap_library(struct dso *dso)
 	}
 }
 
+static int verify_elf_magic(const Ehdr* eh) {
+	return eh->e_ident[0] == ELFMAG0 &&
+		eh->e_ident[1] == ELFMAG1 &&
+		eh->e_ident[2] == ELFMAG2 &&
+		eh->e_ident[3] == ELFMAG3;
+}
+
+/* Verifies that an elf header's machine and class match the loader */
+static int verify_elf_arch(const Ehdr* eh) {
+	return eh->e_machine == ldso.elfmachine &&
+		eh->e_ident[EI_CLASS] == ldso.elfclass;
+}
+
 static void *map_library(int fd, struct dso *dso)
 {
 	Ehdr buf[(896+sizeof(Ehdr))/sizeof(Ehdr)];
@@ -666,6 +681,10 @@ static void *map_library(int fd, struct dso *dso)
 	if (l<0) return 0;
 	if (l<sizeof *eh || (eh->e_type != ET_DYN && eh->e_type != ET_EXEC))
 		goto noexec;
+	if (!verify_elf_magic(eh)) goto noexec;
+	if (!verify_elf_arch(eh)) goto noexec;
+	dso->elfmachine = eh->e_machine;
+	dso->elfclass = eh->e_ident[EI_CLASS];
 	phsize = eh->e_phentsize * eh->e_phnum;
 	if (phsize > sizeof buf - sizeof *eh) {
 		allocated_buf = malloc(phsize);
@@ -830,29 +849,53 @@ error:
 	return 0;
 }
 
-static int path_open(const char *name, const char *s, char *buf, size_t buf_size)
+static int path_open_library(const char *name, const char *s, char *buf, size_t buf_size)
 {
 	size_t l;
 	int fd;
+	const char *p;
 	for (;;) {
 		s += strspn(s, ":\n");
+		p = s;
 		l = strcspn(s, ":\n");
 		if (l-1 >= INT_MAX) return -1;
-		if (snprintf(buf, buf_size, "%.*s/%s", (int)l, s, name) < buf_size) {
-			if ((fd = open(buf, O_RDONLY|O_CLOEXEC))>=0) return fd;
-			switch (errno) {
-			case ENOENT:
-			case ENOTDIR:
-			case EACCES:
-			case ENAMETOOLONG:
-				break;
-			default:
-				/* Any negative value but -1 will inhibit
-				 * futher path search. */
+		s += l;
+		if (snprintf(buf, buf_size, "%.*s/%s", (int)l, p, name) < buf_size) {
+			fd = open(buf, O_RDONLY|O_CLOEXEC);
+			if (fd < 0) {
+				switch (errno) {
+				case ENOENT:
+				case ENOTDIR:
+				case EACCES:
+				case ENAMETOOLONG:
+					/* Keep searching in path list. */
+					continue;
+				default:
+					/* Any negative value but -1 will
+					 * inhibit further path search in
+					 * load_library. */
+					return -2;
+				}
+			}
+			Ehdr eh;
+			ssize_t n = pread(fd, &eh, sizeof eh, 0);
+			/* If the elf file is invalid return -2 to inhibit
+			 * further path search in load_library. */
+			if (n < 0 ||
+			    n != sizeof eh ||
+			    !verify_elf_magic(&eh)) {
+				close(fd);
 				return -2;
 			}
+			/* If the elf file has a valid header but is for the
+			 * wrong architecture ignore it and keep searching the
+			 * path list. */
+			if (!verify_elf_arch(&eh)) {
+				close(fd);
+				continue;
+			}
+			return fd;
 		}
-		s += l;
 	}
 }
 
@@ -1076,12 +1119,12 @@ static struct dso *load_library(const char *name, struct dso *needed_by)
 		}
 		if (strlen(name) > NAME_MAX) return 0;
 		fd = -1;
-		if (env_path) fd = path_open(name, env_path, buf, sizeof buf);
+		if (env_path) fd = path_open_library(name, env_path, buf, sizeof buf);
 		for (p=needed_by; fd == -1 && p; p=p->needed_by) {
 			if (fixup_rpath(p, buf, sizeof buf) < 0)
 				fd = -2; /* Inhibit further search. */
 			if (p->rpath)
-				fd = path_open(name, p->rpath, buf, sizeof buf);
+				fd = path_open_library(name, p->rpath, buf, sizeof buf);
 		}
 		if (fd == -1) {
 			if (!sys_path) {
@@ -1120,7 +1163,7 @@ static struct dso *load_library(const char *name, struct dso *needed_by)
 				}
 			}
 			if (!sys_path) sys_path = "/lib:/usr/local/lib:/usr/lib";
-			fd = path_open(name, sys_path, buf, sizeof buf);
+			fd = path_open_library(name, sys_path, buf, sizeof buf);
 		}
 		pathname = buf;
 	}
@@ -1694,6 +1737,8 @@ hidden void __dls2(unsigned char *base, size_t *sp)
 	ldso.phnum = ehdr->e_phnum;
 	ldso.phdr = laddr(&ldso, ehdr->e_phoff);
 	ldso.phentsize = ehdr->e_phentsize;
+	ldso.elfmachine = ehdr->e_machine;
+	ldso.elfclass = ehdr->e_ident[EI_CLASS];
 	kernel_mapped_dso(&ldso);
 	decode_dyn(&ldso);
 
