@@ -21,8 +21,14 @@
 #include <sys/membarrier.h>
 #include "pthread_impl.h"
 #include "fork_impl.h"
-#include "libc.h"
 #include "dynlink.h"
+
+static size_t ldso_page_size;
+#ifndef PAGE_SIZE
+#define PAGE_SIZE ldso_page_size
+#endif
+
+#include "libc.h"
 
 #define STRINGIFY(x) __STRINGIFY(x)
 #define __STRINGIFY(x) #x
@@ -343,6 +349,40 @@ static struct symdef find_sym(struct dso *dso, const char *s, int need_def)
 	return find_sym2(dso, s, need_def, 0);
 }
 
+static struct symdef get_lfs64(const char *name)
+{
+	const char *p;
+	static const char lfs64_list[] =
+		"aio_cancel\0aio_error\0aio_fsync\0aio_read\0aio_return\0"
+		"aio_suspend\0aio_write\0alphasort\0creat\0fallocate\0"
+		"fgetpos\0fopen\0freopen\0fseeko\0fsetpos\0fstat\0"
+		"fstatat\0fstatfs\0fstatvfs\0ftello\0ftruncate\0ftw\0"
+		"getdents\0getrlimit\0glob\0globfree\0lio_listio\0"
+		"lockf\0lseek\0lstat\0mkostemp\0mkostemps\0mkstemp\0"
+		"mkstemps\0mmap\0nftw\0open\0openat\0posix_fadvise\0"
+		"posix_fallocate\0pread\0preadv\0prlimit\0pwrite\0"
+		"pwritev\0readdir\0scandir\0sendfile\0setrlimit\0"
+		"stat\0statfs\0statvfs\0tmpfile\0truncate\0versionsort\0"
+		"__fxstat\0__fxstatat\0__lxstat\0__xstat\0";
+	size_t l;
+	char buf[16];
+	for (l=0; name[l]; l++) {
+		if (l >= sizeof buf) goto nomatch;
+		buf[l] = name[l];
+	}
+	if (!strcmp(name, "readdir64_r"))
+		return find_sym(&ldso, "readdir_r", 1);
+	if (l<2 || name[l-2]!='6' || name[l-1]!='4')
+		goto nomatch;
+	buf[l-=2] = 0;
+	for (p=lfs64_list; *p; p++) {
+		if (!strcmp(buf, p)) return find_sym(&ldso, buf, 1);
+		while (*p) p++;
+	}
+nomatch:
+	return (struct symdef){ 0 };
+}
+
 static void do_relocs(struct dso *dso, size_t *rel, size_t rel_size, size_t stride)
 {
 	unsigned char *base = dso->base;
@@ -396,6 +436,7 @@ static void do_relocs(struct dso *dso, size_t *rel, size_t rel_size, size_t stri
 			def = (sym->st_info>>4) == STB_LOCAL
 				? (struct symdef){ .dso = dso, .sym = sym }
 				: find_sym(ctx, name, type==REL_PLT);
+			if (!def.sym) def = get_lfs64(name);
 			if (!def.sym && (sym->st_shndx != SHN_UNDEF
 			    || sym->st_info>>4 != STB_WEAK)) {
 				if (dso->lazy && (type==REL_PLT || type==REL_GOT)) {
@@ -524,6 +565,7 @@ static void do_relocs(struct dso *dso, size_t *rel, size_t rel_size, size_t stri
 
 static void do_relr_relocs(struct dso *dso, size_t *relr, size_t relr_size)
 {
+	if (dso == &ldso) return; /* self-relocation was done in _dlstart */
 	unsigned char *base = dso->base;
 	size_t *reloc_addr;
 	for (; relr_size; relr++, relr_size-=sizeof(size_t))
@@ -1739,6 +1781,7 @@ hidden void __dls2(unsigned char *base, size_t *sp)
 	ldso.phentsize = ehdr->e_phentsize;
 	ldso.elfmachine = ehdr->e_machine;
 	ldso.elfclass = ehdr->e_ident[EI_CLASS];
+	search_vec(auxv, &ldso_page_size, AT_PAGESZ);
 	kernel_mapped_dso(&ldso);
 	decode_dyn(&ldso);
 
@@ -1999,6 +2042,10 @@ void __dls3(size_t *sp, size_t *auxv)
 			app.dynv[i+1] = (size_t)&debug;
 		if (DT_DEBUG_INDIRECT && app.dynv[i]==DT_DEBUG_INDIRECT) {
 			size_t *ptr = (size_t *) app.dynv[i+1];
+			*ptr = (size_t)&debug;
+		}
+		if (app.dynv[i]==DT_DEBUG_INDIRECT_REL) {
+			size_t *ptr = (size_t *)((size_t)&app.dynv[i] + app.dynv[i+1]);
 			*ptr = (size_t)&debug;
 		}
 	}
