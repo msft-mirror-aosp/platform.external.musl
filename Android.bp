@@ -186,6 +186,9 @@ cc_defaults {
             enabled: false,
         },
     },
+    lto: {
+        never: true,
+    },
 }
 
 cc_defaults {
