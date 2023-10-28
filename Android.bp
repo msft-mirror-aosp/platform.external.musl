@@ -694,17 +694,11 @@ cc_genrule {
         // Bionic kernel uapi headers
         ":libc_musl_sysroot_bionic_headers",
 
-        // libc++ headers
-        ":libc_musl_sysroot_libc++_headers",
-        ":libc_musl_sysroot_libc++abi_headers",
         ":libc_musl_sysroot_zlib_headers",
 
         // Libraries
         ":libc_musl",
         ":libc_musl_static",
-        ":libc++abi",
-        ":libc++",
-        ":libc++_static",
         ":libz_static_for_sysroot",
 
         // Objects
@@ -760,8 +754,6 @@ cc_genrule {
         "  -f $(location :libc_musl_linker_object) " +
         // libs
         "  -f $(location :libc_musl) " +
-        "  -f $(location :libc++abi) " +
-        "  -f $(location :libc++) " +
         "  -f $(genDir)/ld-musl.so.1 " +
         "  -f $(genDir)/libc.so " +
         // clang wrappers
@@ -780,7 +772,6 @@ cc_genrule {
         "  -f $(location :libc_musl_crt1) " +
         "  -f $(location :libc_musl_rcrt1) " +
         "  -f $(location :libc_musl_Scrt1) " +
-        "  -f $(location :libc++_static) " +
         "  -f $(location :clang_rt.crtbegin) " +
         "  -f $(location :clang_rt.crtend) " +
         "  -f $(location :libz_static_for_sysroot) " +
@@ -788,7 +779,6 @@ cc_genrule {
         "$(location zip2zip) -i $(genDir)/libs.zip -o $(genDir)/libs_renamed.zip " +
         // rename libs from module names to desired names in sysroot
         " lib/libc_musl_static.a:lib/libc.a " +
-        " lib/libc++_static.a:lib/libc++.a " +
         // Swap in linker script for Scrt1.o
         " lib/Scrt1.o:lib/Scrt1-real.o " +
         " lib/Scrt1.ld:lib/Scrt1.o " +
@@ -817,8 +807,6 @@ cc_genrule {
         " && " +
         "$(location merge_zips) -ignore-duplicates $(out) " +
         " $(location :libc_musl_sysroot_bionic_headers) " +
-        " $(location :libc_musl_sysroot_libc++_headers) " +
-        " $(location :libc_musl_sysroot_libc++abi_headers) " +
         " $(location :libc_musl_sysroot_zlib_headers) " +
         " $(location :libc_musl_sysroot_bits) " +
         " $(genDir)/sysroot.zip " +
