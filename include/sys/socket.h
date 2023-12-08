@@ -371,11 +371,7 @@ struct sockaddr {
 	char sa_data[14];
 };
 
-struct sockaddr_storage {
-	sa_family_t ss_family;
-	char __ss_padding[128-sizeof(long)-sizeof(sa_family_t)];
-	unsigned long __ss_align;
-};
+#include <bits/sockaddr_storage.h>
 
 int socket (int, int, int);
 int socketpair (int, int, int, int [2]);
