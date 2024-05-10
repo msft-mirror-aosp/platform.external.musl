@@ -21,8 +21,14 @@
 #include <sys/membarrier.h>
 #include "pthread_impl.h"
 #include "fork_impl.h"
-#include "libc.h"
 #include "dynlink.h"
+
+static size_t ldso_page_size;
+#ifndef PAGE_SIZE
+#define PAGE_SIZE ldso_page_size
+#endif
+
+#include "libc.h"
 
 #define STRINGIFY(x) __STRINGIFY(x)
 #define __STRINGIFY(x) #x
@@ -65,6 +71,8 @@ struct dso {
 	size_t *dynv;
 	struct dso *next, *prev;
 
+	int elfmachine;
+	int elfclass;
 	Phdr *phdr;
 	int phnum;
 	size_t phentsize;
@@ -154,6 +162,8 @@ static struct fdpic_dummy_loadmap app_dummy_loadmap;
 
 struct debug *_dl_debug_addr = &debug;
 static void (*exe_dl_debug_state)(void) = 0;
+
+extern weak hidden char __ehdr_start[];
 
 extern hidden int __malloc_replaced;
 
@@ -341,6 +351,40 @@ static struct symdef find_sym(struct dso *dso, const char *s, int need_def)
 	return find_sym2(dso, s, need_def, 0);
 }
 
+static struct symdef get_lfs64(const char *name)
+{
+	const char *p;
+	static const char lfs64_list[] =
+		"aio_cancel\0aio_error\0aio_fsync\0aio_read\0aio_return\0"
+		"aio_suspend\0aio_write\0alphasort\0creat\0fallocate\0"
+		"fgetpos\0fopen\0freopen\0fseeko\0fsetpos\0fstat\0"
+		"fstatat\0fstatfs\0fstatvfs\0ftello\0ftruncate\0ftw\0"
+		"getdents\0getrlimit\0glob\0globfree\0lio_listio\0"
+		"lockf\0lseek\0lstat\0mkostemp\0mkostemps\0mkstemp\0"
+		"mkstemps\0mmap\0nftw\0open\0openat\0posix_fadvise\0"
+		"posix_fallocate\0pread\0preadv\0prlimit\0pwrite\0"
+		"pwritev\0readdir\0scandir\0sendfile\0setrlimit\0"
+		"stat\0statfs\0statvfs\0tmpfile\0truncate\0versionsort\0"
+		"__fxstat\0__fxstatat\0__lxstat\0__xstat\0";
+	size_t l;
+	char buf[16];
+	for (l=0; name[l]; l++) {
+		if (l >= sizeof buf) goto nomatch;
+		buf[l] = name[l];
+	}
+	if (!strcmp(name, "readdir64_r"))
+		return find_sym(&ldso, "readdir_r", 1);
+	if (l<2 || name[l-2]!='6' || name[l-1]!='4')
+		goto nomatch;
+	buf[l-=2] = 0;
+	for (p=lfs64_list; *p; p++) {
+		if (!strcmp(buf, p)) return find_sym(&ldso, buf, 1);
+		while (*p) p++;
+	}
+nomatch:
+	return (struct symdef){ 0 };
+}
+
 static void do_relocs(struct dso *dso, size_t *rel, size_t rel_size, size_t stride)
 {
 	unsigned char *base = dso->base;
@@ -394,6 +438,7 @@ static void do_relocs(struct dso *dso, size_t *rel, size_t rel_size, size_t stri
 			def = (sym->st_info>>4) == STB_LOCAL
 				? (struct symdef){ .dso = dso, .sym = sym }
 				: find_sym(ctx, name, type==REL_PLT);
+			if (!def.sym) def = get_lfs64(name);
 			if (!def.sym && (sym->st_shndx != SHN_UNDEF
 			    || sym->st_info>>4 != STB_WEAK)) {
 				if (dso->lazy && (type==REL_PLT || type==REL_GOT)) {
@@ -478,7 +523,7 @@ static void do_relocs(struct dso *dso, size_t *rel, size_t rel_size, size_t stri
 			break;
 #endif
 		case REL_TLSDESC:
-			if (stride<3) addend = reloc_addr[1];
+			if (stride<3) addend = reloc_addr[!TLSDESC_BACKWARDS];
 			if (def.dso->tls_id > static_tls_cnt) {
 				struct td_index *new = malloc(sizeof *new);
 				if (!new) {
@@ -503,13 +548,13 @@ static void do_relocs(struct dso *dso, size_t *rel, size_t rel_size, size_t stri
 					+ addend;
 #endif
 			}
-#ifdef TLSDESC_BACKWARDS
 			/* Some archs (32-bit ARM at least) invert the order of
 			 * the descriptor members. Fix them up here. */
-			size_t tmp = reloc_addr[0];
-			reloc_addr[0] = reloc_addr[1];
-			reloc_addr[1] = tmp;
-#endif
+			if (TLSDESC_BACKWARDS) {
+				size_t tmp = reloc_addr[0];
+				reloc_addr[0] = reloc_addr[1];
+				reloc_addr[1] = tmp;
+			}
 			break;
 		default:
 			error("Error relocating %s: unsupported relocation type %d",
@@ -522,6 +567,7 @@ static void do_relocs(struct dso *dso, size_t *rel, size_t rel_size, size_t stri
 
 static void do_relr_relocs(struct dso *dso, size_t *relr, size_t relr_size)
 {
+	if (dso == &ldso) return; /* self-relocation was done in _dlstart */
 	unsigned char *base = dso->base;
 	size_t *reloc_addr;
 	for (; relr_size; relr++, relr_size-=sizeof(size_t))
@@ -644,6 +690,19 @@ static void unmap_library(struct dso *dso)
 	}
 }
 
+static int verify_elf_magic(const Ehdr* eh) {
+	return eh->e_ident[0] == ELFMAG0 &&
+		eh->e_ident[1] == ELFMAG1 &&
+		eh->e_ident[2] == ELFMAG2 &&
+		eh->e_ident[3] == ELFMAG3;
+}
+
+/* Verifies that an elf header's machine and class match the loader */
+static int verify_elf_arch(const Ehdr* eh) {
+	return eh->e_machine == ldso.elfmachine &&
+		eh->e_ident[EI_CLASS] == ldso.elfclass;
+}
+
 static void *map_library(int fd, struct dso *dso)
 {
 	Ehdr buf[(896+sizeof(Ehdr))/sizeof(Ehdr)];
@@ -666,6 +725,10 @@ static void *map_library(int fd, struct dso *dso)
 	if (l<0) return 0;
 	if (l<sizeof *eh || (eh->e_type != ET_DYN && eh->e_type != ET_EXEC))
 		goto noexec;
+	if (!verify_elf_magic(eh)) goto noexec;
+	if (!verify_elf_arch(eh)) goto noexec;
+	dso->elfmachine = eh->e_machine;
+	dso->elfclass = eh->e_ident[EI_CLASS];
 	phsize = eh->e_phentsize * eh->e_phnum;
 	if (phsize > sizeof buf - sizeof *eh) {
 		allocated_buf = malloc(phsize);
@@ -830,29 +893,53 @@ error:
 	return 0;
 }
 
-static int path_open(const char *name, const char *s, char *buf, size_t buf_size)
+static int path_open_library(const char *name, const char *s, char *buf, size_t buf_size)
 {
 	size_t l;
 	int fd;
+	const char *p;
 	for (;;) {
 		s += strspn(s, ":\n");
+		p = s;
 		l = strcspn(s, ":\n");
 		if (l-1 >= INT_MAX) return -1;
-		if (snprintf(buf, buf_size, "%.*s/%s", (int)l, s, name) < buf_size) {
-			if ((fd = open(buf, O_RDONLY|O_CLOEXEC))>=0) return fd;
-			switch (errno) {
-			case ENOENT:
-			case ENOTDIR:
-			case EACCES:
-			case ENAMETOOLONG:
-				break;
-			default:
-				/* Any negative value but -1 will inhibit
-				 * futher path search. */
+		s += l;
+		if (snprintf(buf, buf_size, "%.*s/%s", (int)l, p, name) < buf_size) {
+			fd = open(buf, O_RDONLY|O_CLOEXEC);
+			if (fd < 0) {
+				switch (errno) {
+				case ENOENT:
+				case ENOTDIR:
+				case EACCES:
+				case ENAMETOOLONG:
+					/* Keep searching in path list. */
+					continue;
+				default:
+					/* Any negative value but -1 will
+					 * inhibit further path search in
+					 * load_library. */
+					return -2;
+				}
+			}
+			Ehdr eh;
+			ssize_t n = pread(fd, &eh, sizeof eh, 0);
+			/* If the elf file is invalid return -2 to inhibit
+			 * further path search in load_library. */
+			if (n < 0 ||
+			    n != sizeof eh ||
+			    !verify_elf_magic(&eh)) {
+				close(fd);
 				return -2;
 			}
+			/* If the elf file has a valid header but is for the
+			 * wrong architecture ignore it and keep searching the
+			 * path list. */
+			if (!verify_elf_arch(&eh)) {
+				close(fd);
+				continue;
+			}
+			return fd;
 		}
-		s += l;
 	}
 }
 
@@ -1076,12 +1163,12 @@ static struct dso *load_library(const char *name, struct dso *needed_by)
 		}
 		if (strlen(name) > NAME_MAX) return 0;
 		fd = -1;
-		if (env_path) fd = path_open(name, env_path, buf, sizeof buf);
+		if (env_path) fd = path_open_library(name, env_path, buf, sizeof buf);
 		for (p=needed_by; fd == -1 && p; p=p->needed_by) {
 			if (fixup_rpath(p, buf, sizeof buf) < 0)
 				fd = -2; /* Inhibit further search. */
 			if (p->rpath)
-				fd = path_open(name, p->rpath, buf, sizeof buf);
+				fd = path_open_library(name, p->rpath, buf, sizeof buf);
 		}
 		if (fd == -1) {
 			if (!sys_path) {
@@ -1120,7 +1207,7 @@ static struct dso *load_library(const char *name, struct dso *needed_by)
 				}
 			}
 			if (!sys_path) sys_path = "/lib:/usr/local/lib:/usr/lib";
-			fd = path_open(name, sys_path, buf, sizeof buf);
+			fd = path_open_library(name, sys_path, buf, sizeof buf);
 		}
 		pathname = buf;
 	}
@@ -1689,11 +1776,14 @@ hidden void __dls2(unsigned char *base, size_t *sp)
 	} else {
 		ldso.base = base;
 	}
-	Ehdr *ehdr = (void *)ldso.base;
+	Ehdr *ehdr = __ehdr_start ? (void *)__ehdr_start : (void *)ldso.base;
 	ldso.name = ldso.shortname = STRINGIFY(LIBC_SONAME);
 	ldso.phnum = ehdr->e_phnum;
 	ldso.phdr = laddr(&ldso, ehdr->e_phoff);
 	ldso.phentsize = ehdr->e_phentsize;
+	ldso.elfmachine = ehdr->e_machine;
+	ldso.elfclass = ehdr->e_ident[EI_CLASS];
+	search_vec(auxv, &ldso_page_size, AT_PAGESZ);
 	kernel_mapped_dso(&ldso);
 	decode_dyn(&ldso);
 
@@ -1954,6 +2044,10 @@ void __dls3(size_t *sp, size_t *auxv)
 			app.dynv[i+1] = (size_t)&debug;
 		if (DT_DEBUG_INDIRECT && app.dynv[i]==DT_DEBUG_INDIRECT) {
 			size_t *ptr = (size_t *) app.dynv[i+1];
+			*ptr = (size_t)&debug;
+		}
+		if (app.dynv[i]==DT_DEBUG_INDIRECT_REL) {
+			size_t *ptr = (size_t *)((size_t)&app.dynv[i] + app.dynv[i+1]);
 			*ptr = (size_t)&debug;
 		}
 	}
