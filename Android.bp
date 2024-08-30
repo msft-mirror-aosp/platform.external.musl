@@ -213,12 +213,12 @@ cc_library_headers {
     export_header_lib_headers: [
         "libc_musl_arch_headers",
         "libc_musl_public_headers",
-        "libc_llndk_headers",
+        "libc_uapi_headers",
     ],
     header_libs: [
         "libc_musl_arch_headers",
         "libc_musl_public_headers",
-        "libc_llndk_headers",
+        "libc_uapi_headers",
     ],
 }
 
@@ -242,10 +242,10 @@ cc_library {
     export_header_lib_headers: [
         "libc_musl_arch_headers",
         "libc_musl_public_headers",
-        "libc_llndk_headers",
+        "libc_uapi_headers",
     ],
     header_libs: [
-        "libc_llndk_headers",
+        "libc_uapi_headers",
     ],
 }
 
@@ -273,10 +273,10 @@ cc_library_static {
     export_header_lib_headers: [
         "libc_musl_arch_headers",
         "libc_musl_public_headers",
-        "libc_llndk_headers",
+        "libc_uapi_headers",
     ],
     header_libs: [
-        "libc_llndk_headers",
+        "libc_uapi_headers",
     ],
 }
 
