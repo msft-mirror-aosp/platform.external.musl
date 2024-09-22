@@ -21,14 +21,16 @@
 #include <sys/membarrier.h>
 #include "pthread_impl.h"
 #include "fork_impl.h"
+#include "libc.h"
 #include "dynlink.h"
 
 static size_t ldso_page_size;
-#ifndef PAGE_SIZE
+/* libc.h may have defined a macro for dynamic PAGE_SIZE already, but
+ * PAGESIZE is only defined if it's constant for the arch. */
+#ifndef PAGESIZE
+#undef PAGE_SIZE
 #define PAGE_SIZE ldso_page_size
 #endif
-
-#include "libc.h"
 
 #define STRINGIFY(x) __STRINGIFY(x)
 #define __STRINGIFY(x) #x
@@ -366,19 +368,14 @@ static struct symdef get_lfs64(const char *name)
 		"pwritev\0readdir\0scandir\0sendfile\0setrlimit\0"
 		"stat\0statfs\0statvfs\0tmpfile\0truncate\0versionsort\0"
 		"__fxstat\0__fxstatat\0__lxstat\0__xstat\0";
-	size_t l;
-	char buf[16];
-	for (l=0; name[l]; l++) {
-		if (l >= sizeof buf) goto nomatch;
-		buf[l] = name[l];
-	}
 	if (!strcmp(name, "readdir64_r"))
 		return find_sym(&ldso, "readdir_r", 1);
-	if (l<2 || name[l-2]!='6' || name[l-1]!='4')
+	size_t l = strnlen(name, 18);
+	if (l<2 || name[l-2]!='6' || name[l-1]!='4' || name[l])
 		goto nomatch;
-	buf[l-=2] = 0;
 	for (p=lfs64_list; *p; p++) {
-		if (!strcmp(buf, p)) return find_sym(&ldso, buf, 1);
+		if (!strncmp(name, p, l-2) && !p[l-2])
+			return find_sym(&ldso, p, 1);
 		while (*p) p++;
 	}
 nomatch:
@@ -907,20 +904,20 @@ static int path_open_library(const char *name, const char *s, char *buf, size_t 
 		if (snprintf(buf, buf_size, "%.*s/%s", (int)l, p, name) < buf_size) {
 			fd = open(buf, O_RDONLY|O_CLOEXEC);
 			if (fd < 0) {
-				switch (errno) {
-				case ENOENT:
-				case ENOTDIR:
-				case EACCES:
-				case ENAMETOOLONG:
+			switch (errno) {
+			case ENOENT:
+			case ENOTDIR:
+			case EACCES:
+			case ENAMETOOLONG:
 					/* Keep searching in path list. */
 					continue;
-				default:
+			default:
 					/* Any negative value but -1 will
 					 * inhibit further path search in
 					 * load_library. */
-					return -2;
-				}
+				return -2;
 			}
+		}
 			Ehdr eh;
 			ssize_t n = pread(fd, &eh, sizeof eh, 0);
 			/* If the elf file is invalid return -2 to inhibit
