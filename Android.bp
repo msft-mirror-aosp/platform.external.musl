@@ -370,6 +370,12 @@ cc_defaults {
     ldflags: [
         "-Wl,--no-gc-sections",
     ],
+    // Cmake snapshots are not supported when building for musl, but
+    // all host modules depend on the musl CRT objects when building
+    // the host for musl, so mark the CRT objects as supported to avoid
+    // "CMake snapshots not supported, despite being a dependency for ..."
+    // errors.
+    cmake_snapshot_supported: true,
 
     // The headers below are the same as the header_libs in
     // libc_musl_defaults, but bazel considers the crt depending
@@ -599,7 +605,6 @@ cc_genrule {
 // configure scripts from external projects to generate necessary files to build against musl.
 //
 
-
 // An empty static library that will be copied to libdl.a, etc. in the sysroot.
 // Shouldn't be used by anything else besides the sysroot cc_genrule.
 cc_library_static {
@@ -813,4 +818,4 @@ cc_genrule {
         " $(genDir)/libs_renamed.zip",
 }
 
-build=["sources.bp"]
+build = ["sources.bp"]
