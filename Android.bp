@@ -125,6 +125,7 @@ cc_defaults {
 
         // disable warnings:
         "-Wno-bitwise-op-parentheses",
+        "-Wno-cast-function-type-mismatch",
         "-Wno-dangling-else",
         "-Wno-ignored-attributes",
         "-Wno-logical-op-parentheses",
