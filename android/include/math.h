@@ -28,9 +28,8 @@
 
 #pragma once
 
-/* GNU extensions not in musl. */
+/* POSIX extensions not in musl. */
 
-#if defined(_GNU_SOURCE)
 #define M_El            2.718281828459045235360287471352662498L /* e */
 #define M_LOG2El        1.442695040888963407359924681001892137L /* log 2e */
 #define M_LOG10El       0.434294481903251827651128918916605082L /* log 10e */
@@ -44,6 +43,5 @@
 #define M_2_SQRTPIl     1.128379167095512573896158903121545172L /* 2/sqrt(pi) */
 #define M_SQRT2l        1.414213562373095048801688724209698079L /* sqrt(2) */
 #define M_SQRT1_2l      0.707106781186547524400844362104849039L /* 1/sqrt(2) */
-#endif
 
 #include_next <math.h>
