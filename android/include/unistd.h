@@ -28,6 +28,7 @@
 
 #pragma once
 
+#include <errno.h>
 
 /* Used to retry syscalls that can return EINTR. */
 #ifndef TEMP_FAILURE_RETRY
