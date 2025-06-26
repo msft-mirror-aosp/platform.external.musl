@@ -39,7 +39,7 @@ extern "C" {
 #endif
 
 #if __cplusplus >= 201103L
-#define NULL nullptr
+#define NULL __null
 #elif defined(__cplusplus)
 #define NULL 0L
 #else
