@@ -15,6 +15,7 @@ third_party {
   identifier {
     type: "Git"
     value: "git://git.musl-libc.org/musl"
-    version: "v1.2.5"
+    version: "0784374d561435f7c787a555aeab8ede699ed298"
+    closest_version: "v1.2.5"
   }
 }
