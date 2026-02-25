@@ -231,6 +231,7 @@ cc_library {
     name: "libc_musl",
     visibility: ["//visibility:public"],
     defaults: ["libc_musl_defaults"],
+    srcs: ["android/strtol_l.c"],
     whole_static_libs: ["libc_musl_static"],
     shared: {
         whole_static_libs: ["libc_musl_ldso"],
