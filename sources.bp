@@ -1012,6 +1012,7 @@ cc_defaults {
         "src/termios/cfgetospeed.c",
         "src/termios/cfmakeraw.c",
         "src/termios/cfsetospeed.c",
+        "src/termios/cfsetspeed.c",
         "src/termios/tcdrain.c",
         "src/termios/tcflow.c",
         "src/termios/tcflush.c",
@@ -1155,6 +1156,7 @@ cc_defaults {
         "src/time/__secs_to_tm.c",
         "src/time/__tm_to_secs.c",
         "src/time/__tz.c",
+        "src/time/__utc.c",
         "src/time/__year_to_secs.c",
         "src/time/asctime.c",
         "src/time/asctime_r.c",
@@ -1948,7 +1950,7 @@ cc_defaults {
         },
         arm64: {
             srcs: [
-                "src/thread/aarch64/__set_thread_area.s",
+                "src/thread/aarch64/__set_thread_area.c",
             ],
             exclude_srcs: [
                 "src/thread/__set_thread_area.c",
