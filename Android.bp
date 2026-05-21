@@ -190,6 +190,7 @@ cc_defaults {
     lto: {
         never: true,
     },
+    has_no_aidl_srcs: true,
 }
 
 cc_defaults {
