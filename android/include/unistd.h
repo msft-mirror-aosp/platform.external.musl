@@ -41,3 +41,11 @@
 #endif
 
 #include_next <unistd.h>
+
+/*
+  libcore/luni/src/main/native/android_system_OsConstantsHolder.cpp defines
+  a _SC_2_C_VERSION sysconf constant for java, but musl doesn't define one
+  because it is deprecated.  Define it to INT_MAX, which will cause sysconf
+  to return -1.
+*/
+#define _SC_2_C_VERSION INT_MAX
