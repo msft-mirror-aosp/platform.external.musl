@@ -687,8 +687,9 @@ cc_genrule {
         },
     },
     srcs: [
-        "LICENSE",
         "COPYRIGHT",
+        ":libc_musl_sysroot_bionic_notice",
+        ":libc_musl_sysroot_zlib_notice",
 
         // Headers
         "include/**/*.h",
@@ -739,12 +740,19 @@ cc_genrule {
         "bits=($(locations arch/generic/bits/*.h)) && " +
         "android_bits=($(locations android/include/bits/*.h)) && " +
         "ln -s libc_musl.so $(genDir)/ld-musl.so.1 && " +
-        "echo -e 'GROUP ( libc_musl_linker_object.o )\nINCLUDE relinterp.script' > $(genDir)/Scrt1.ld && " +
+        "(echo 'GROUP ( libc_musl_linker_object.o )'; echo 'INCLUDE relinterp.script') > $(genDir)/Scrt1.ld && " +
         "echo -e 'GROUP ( libc_musl.so )' > $(genDir)/libc.so && " +
+        "for f in " +
+        " $(location COPYRIGHT) " +
+        // extra notices
+        " $(location :libc_musl_sysroot_bionic_notice) " +
+        " $(location :libc_musl_sysroot_zlib_notice) " +
+        " ; do " +
+        "   echo $$f; echo ----------; cat $$f; " +
+        " done > $(genDir)/LICENSE && " +
         "$(location soong_zip) -o $(genDir)/sysroot.zip " +
         " -j " +
-        "  -f $(location LICENSE) " +
-        "  -f $(location COPYRIGHT) " +
+        "  -f $(genDir)/LICENSE " +
         // headers
         " -P include " +
         "  -C $$(dirname $${includes[0]}) " +
