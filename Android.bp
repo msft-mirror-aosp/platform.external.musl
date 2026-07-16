@@ -690,6 +690,7 @@ cc_genrule {
         "COPYRIGHT",
         ":libc_musl_sysroot_bionic_notice",
         ":libc_musl_sysroot_zlib_notice",
+        ":libjemalloc5_notice",
 
         // Headers
         "include/**/*.h",
@@ -708,6 +709,7 @@ cc_genrule {
         // Libraries
         ":libc_musl",
         ":libc_musl_static",
+        ":libjemalloc5",
         ":libz_static_for_sysroot",
 
         // Objects
@@ -741,12 +743,13 @@ cc_genrule {
         "android_bits=($(locations android/include/bits/*.h)) && " +
         "ln -s libc_musl.so $(genDir)/ld-musl.so.1 && " +
         "(echo 'GROUP ( libc_musl_linker_object.o )'; echo 'INCLUDE relinterp.script') > $(genDir)/Scrt1.ld && " +
-        "echo -e 'GROUP ( libc_musl.so )' > $(genDir)/libc.so && " +
+        "echo -e 'GROUP ( libc_musl.so libjemalloc5.so )' > $(genDir)/libc.so && " +
         "for f in " +
         " $(location COPYRIGHT) " +
         // extra notices
         " $(location :libc_musl_sysroot_bionic_notice) " +
         " $(location :libc_musl_sysroot_zlib_notice) " +
+        " $(location :libjemalloc5_notice) " +
         " ; do " +
         "   echo $$f; echo ----------; cat $$f; " +
         " done > $(genDir)/LICENSE && " +
@@ -770,6 +773,7 @@ cc_genrule {
         "  -f $(location :libc_musl_linker_object) " +
         // libs
         "  -f $(location :libc_musl) " +
+        "  -f $(location :libjemalloc5) " +
         "  -f $(genDir)/ld-musl.so.1 " +
         "  -f $(genDir)/libc.so " +
         // clang wrappers
