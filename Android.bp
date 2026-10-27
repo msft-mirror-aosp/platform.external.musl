@@ -191,6 +191,18 @@ cc_defaults {
         never: true,
     },
     has_no_aidl_srcs: true,
+    extra_include_dir_deps: [
+        "crt/crt1.c",
+        "ldso/dlstart.c",
+        "src/fenv/fenv.c",
+        "src/malloc/calloc.c",
+        "src/math/fabs.c",
+        "src/math/fabsf.c",
+        "src/math/fma.c",
+        "src/math/fmaf.c",
+        "src/math/sqrt.c",
+        "src/math/sqrtf.c",
+    ],
 }
 
 cc_defaults {
